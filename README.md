@@ -1,8 +1,10 @@
-# Sarashina 翻訳
+# Sarashina API 翻訳（非公式）
 
 Sarashina APIを使って、Webページの文章を日本語・英語に翻訳するChrome／Safari拡張機能です。選択した文章の翻訳、入力欄への訳文の反映、原文の解説、訳文のニュアンスの確認に対応しています。
 
-本プロジェクトはSarashina APIを利用する非公式の拡張機能です。利用には、ご自身のSarashina APIキーが必要です。
+本プロジェクトは、個人が開発した非公式のブラウザ拡張機能です。SB Intuitions株式会社が提供・公認する製品ではありません。Sarashina APIを利用していますが、APIの提供元と本拡張機能の開発者は異なります。
+
+利用には、ご自身のSarashina APIキーが必要です。
 
 | ブラウザー | バージョン | 読み込む場所 |
 |---|---|---|
@@ -63,7 +65,7 @@ Sarashina APIを使って、Webページの文章を日本語・英語に翻訳�
 リポジトリをダウンロードして展開するか、次のコマンドで取得します。
 
 ```bash
-git clone https://github.com/hajimeno-ipoo/Sarashina.git
+git clone https://github.com/hajimeno-ipoo/sarashina-api-translator-unofficial.git
 ```
 
 ### Chrome
@@ -71,7 +73,7 @@ git clone https://github.com/hajimeno-ipoo/Sarashina.git
 1. `chrome://extensions` を開きます。
 2. 右上の「デベロッパーモード」を有効にします。
 3. 「パッケージ化されていない拡張機能を読み込む」を押します。
-4. ルートの `manifest.json` が入っている `Sarashina` フォルダを選びます。`safari/` は選びません。
+4. ルートの `manifest.json` が入っている `sarashina-api-translator-unofficial` フォルダを選びます。`safari/` は選びません。
 5. ツールバーにSarashinaを固定し、設定画面を開きます。
 
 手順の参考：[Chrome公式の拡張機能読み込みガイド](https://developer.chrome.com/docs/extensions/get-started/tutorial/hello-world#load-unpacked)
@@ -112,7 +114,7 @@ Chromeでは拡張機能を再読み込みし、翻訳対象のページも再�
 ## ソース構成
 
 ```text
-Sarashina/
+sarashina-api-translator-unofficial/
 ├── manifest.json              # Chrome版
 ├── background.js              # API通信・メニュー・メッセージ処理
 ├── content.js                 # 選択カード・ページ翻訳
