@@ -32,3 +32,6 @@ node_modules/
 /AGENTS.md
 /FOR*.md
 /docs/20261013_sarashina_translator/
+
+# ローカルの画面確認・検証出力
+/output/

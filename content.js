@@ -39,6 +39,8 @@
     return /[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FAF]/.test(text);
   }
 
+  globalThis.SarashinaReading?.configure({ skipElement: isIconOrDecorativeElement });
+
   // ==========================================
   // メッセージリスナー
   // ==========================================
@@ -87,6 +89,22 @@
         void translateSelection(sourceText);
       }
       sendResponse({ success: true });
+      return;
+    }
+
+    if (message.action === "start_page_readings" || message.action === "remove_page_readings") {
+      const reading = globalThis.SarashinaReading;
+      if (!reading) {
+        sendResponse({ success: false, error: "拡張機能と対象ページを再読み込みしてください。" });
+      } else if (message.action === "remove_page_readings") {
+        reading.remove();
+        sendResponse({ success: true });
+      } else if (isPageTranslating) {
+        sendResponse({ success: false, error: "ページの翻訳が終わってから、読みを表示してください。" });
+      } else {
+        void reading.start();
+        sendResponse({ success: true });
+      }
       return;
     }
 
@@ -336,7 +354,7 @@
         <div class="sarashina-header">
           <div class="sarashina-brand">
             <span class="sarashina-icon">⛩️</span>
-            <span class="sarashina-title">Sarashina 翻訳</span>
+            <span class="sarashina-title">Sarashina 翻訳（非公式）</span>
             ${data.model ? `<span class="sarashina-tag">${escapeHtml(data.model)}</span>` : ""}
           </div>
           <div class="sarashina-header-actions">
@@ -742,6 +760,7 @@
   // ==========================================
   async function startFullPageTranslation(direction = "en_to_ja") {
     if (isPageTranslating) return;
+    globalThis.SarashinaReading?.remove();
 
     if (isPageTranslated) {
       restoreOriginalPage(false);
@@ -877,6 +896,7 @@
 
   // 原文に復元
   function restoreOriginalPage(updateBar = true) {
+    globalThis.SarashinaReading?.remove();
     if (!isPageTranslated || translatedNodesList.length === 0) return;
 
     for (const item of translatedNodesList) {
@@ -964,7 +984,7 @@
     const nodes = [];
     const ignoreTags = new Set([
       "SCRIPT", "STYLE", "NOSCRIPT", "TEXTAREA", "INPUT", "CODE", "PRE",
-      "SVG", "CANVAS", "IFRAME", "SELECT", "AUDIO", "VIDEO"
+      "SVG", "CANVAS", "IFRAME", "SELECT", "AUDIO", "VIDEO", "RT", "RP"
     ]);
 
     function walk(node) {
@@ -1053,7 +1073,7 @@
       <div class="sarashina-page-bar">
         <div class="sarashina-bar-left">
           <span class="sarashina-bar-icon">⛩️</span>
-          <span class="sarashina-bar-brand">Sarashina 翻訳</span>
+          <span class="sarashina-bar-brand">Sarashina 翻訳（非公式）</span>
           <span class="sarashina-bar-msg">${escapeHtml(message)}</span>
         </div>
         <div class="sarashina-bar-actions">

@@ -40,6 +40,30 @@ document.addEventListener("DOMContentLoaded", async () => {
   openSettingsLink.addEventListener("click", openOptions);
 
   // 1. ページ全体翻訳ボタン
+  const showReadingsBtn = document.getElementById("show-readings-btn");
+  const removeReadingsBtn = document.getElementById("remove-readings-btn");
+  async function requestPageReadings(remove) {
+    clearError();
+    showReadingsBtn.disabled = removeReadingsBtn.disabled = true;
+    try {
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (!Number.isInteger(tab?.id) || tab.id < 0 || !/^https?:\/\//.test(tab.url || "")) {
+        throw new Error("通常のWebサイト（https://〜）でお試しください。");
+      }
+      const response = await chrome.runtime.sendMessage({
+        action: remove ? "remove_page_readings" : "launch_page_readings", tabId: tab.id
+      });
+      if (!response?.success) throw new Error(response?.error || "読み付けを起動できませんでした。");
+      window.close();
+    } catch (error) {
+      showError(error.message);
+    } finally {
+      showReadingsBtn.disabled = removeReadingsBtn.disabled = false;
+    }
+  }
+  showReadingsBtn.addEventListener("click", () => { void requestPageReadings(false); });
+  removeReadingsBtn.addEventListener("click", () => { void requestPageReadings(true); });
+
   translatePageBtn.addEventListener("click", async () => {
     clearError();
     translatePageBtn.disabled = true;

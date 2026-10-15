@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <title>Reading DOM fixture</title>
+  <style>
+    body { max-width: 760px; margin: 32px auto; font: 18px/2 sans-serif; }
+    .hidden { display: none; }
+    .invisible { visibility: hidden; }
+    .material-icons { font-family: "Material Icons"; }
+  </style>
+</head>
+<body>
+  <main id="article">
+    <p id="mixed">Englishを勉強する。今日は日本語も読む。</p>
+    <p id="past">I <strong id="read-strong">read</strong> yesterday.</p>
+    <p id="present">I read every day.</p>
+    <p id="context">人気のない道を歩く。</p>
+    <p id="inline">Visit <a id="original-link" href="#destination">English</a> and <b id="original-bold">日本語</b>.</p>
+    <p id="split">A <span id="split-first">rea</span><em id="split-last">ding</em> test.</p>
+    <button id="original-button" type="button">Read 日本語</button>
+    <p id="destination">The destination.</p>
+    <p id="changing">Original English.</p>
+  </main>
+  <section id="excluded">
+    <input id="input" value="Input 日本語">
+    <textarea id="textarea">Textarea 日本語</textarea>
+    <div id="editable" contenteditable="true">Editable 日本語</div>
+    <pre id="pre">Preformatted 日本語</pre>
+    <code id="code">Code 日本語</code>
+    <ruby id="existing-ruby">既存<rt>きそん</rt></ruby>
+    <span id="icon" class="material-icons">settings</span>
+    <p id="hidden" hidden>Hiddenattribute 日本語</p>
+    <p id="display-none" class="hidden">Displaynone 日本語</p>
+    <p id="visibility-hidden" class="invisible">Visibilityhidden 日本語</p>
+    <select id="select"><option>Option 日本語</option></select>
+  </section>
+  <script>
+    window.linkClicks = 0;
+    window.buttonClicks = 0;
+    window.originalLink = document.getElementById('original-link');
+    window.originalButton = document.getElementById('original-button');
+    window.originalBold = document.getElementById('original-bold');
+    window.originalLink.addEventListener('click', (event) => { event.preventDefault(); window.linkClicks++; });
+    window.originalButton.onclick = () => { window.buttonClicks++; };
+  </script>
+</body>
+</html>

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Sarashina 翻訳 - 設定</title>
+  <title>Sarashina 翻訳（非公式） - 設定</title>
   <style>
     * {
       box-sizing: border-box;
@@ -170,13 +170,13 @@
     <div class="header">
       <img src="icons/icon48.png" alt="Torii Icon" class="header-icon">
       <div>
-        <h1>Sarashina 翻訳 - 設定</h1>
-        <div class="subtitle">Sarashina AI 公式APIに準拠した設定を行います</div>
+        <h1>Sarashina 翻訳（非公式） - 設定</h1>
+        <div class="subtitle">この拡張機能は個人が開発した非公式のものです。SB Intuitions株式会社が提供・公認する製品ではありません。</div>
       </div>
     </div>
 
     <div class="info-card">
-      <strong>💡 公式 Translate API（sarashina3-translate）対応</strong><br>
+      <strong>💡 Sarashina Translate API（sarashina3-translate）対応</strong><br>
       「英語 → 日本語」および「日本語 → 英語」の相互翻訳、日本語保持フィルタリングに対応しています。
     </div>
 
@@ -201,7 +201,7 @@
 
       <div class="form-group">
         <label for="api-mode">API モード</label>
-        <div class="helper-text">利用するAPIの種類を選択します。通常は公式の「Translate API」をご利用ください。</div>
+        <div class="helper-text">利用するAPIの種類を選択します。通常は「Translate API」をご利用ください。</div>
         <select id="api-mode">
           <option value="translate" selected>Translate API (推奨: sarashina3-translate 日英・英日特化)</option>
           <option value="chat">Chat Completions API (対話モデルによる翻訳)</option>
@@ -210,7 +210,7 @@
 
       <div id="chat-model-group" class="form-group" style="display: none;">
         <label for="chat-model">Chat モデル名</label>
-        <div class="helper-text">Chat Completions API 利用時のモデル（公式仕様: sarashina3-mini / sarashina3-nano）</div>
+        <div class="helper-text">Chat Completions API 利用時のモデル（対応モデル: sarashina3-mini / sarashina3-nano）</div>
         <select id="chat-model">
           <option value="sarashina3-mini" selected>sarashina3-mini (標準対話モデル)</option>
           <option value="sarashina3-nano">sarashina3-nano (高速・軽量モデル)</option>
@@ -219,7 +219,7 @@
 
       <div class="form-group">
         <label for="api-base-url">API ベース URL</label>
-        <div class="helper-text">エンドポイントのベースURLです（公式デフォルト: https://api.sarashina.ai/v1）</div>
+        <div class="helper-text">エンドポイントのベースURLです（Sarashinaの標準URL: https://api.sarashina.ai/v1）</div>
         <input type="text" id="api-base-url" placeholder="https://api.sarashina.ai/v1">
       </div>
 

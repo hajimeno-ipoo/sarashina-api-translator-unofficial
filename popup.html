@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Sarashina 翻訳</title>
+  <title>Sarashina 翻訳（非公式）</title>
   <style>
     * {
       box-sizing: border-box;
@@ -284,12 +284,14 @@
     <div class="title-group">
       <img src="icons/icon48.png" alt="Torii Icon" class="app-icon">
       <span class="title">Sarashina 翻訳</span>
-      <span class="tag">公式API</span>
+      <span class="tag">非公式</span>
     </div>
     <button id="open-settings-icon" class="settings-btn" title="設定を開く">
       ⚙️
     </button>
   </div>
+
+  <p style="font-size:12px;line-height:1.6;color:#475569;margin-bottom:12px">この拡張機能は個人が開発した非公式のものです。SB Intuitions株式会社が提供・公認する製品ではありません。</p>
 
   <div id="api-key-warning" class="warning-banner">
     ⚠️ <strong>APIキー未設定</strong><br>
@@ -307,6 +309,17 @@
         <option value="ja_to_en">日本語 → 英語</option>
       </select>
       <button id="translate-page-btn" class="full-page-btn">ページ全体を翻訳</button>
+    </div>
+  </div>
+
+  <div class="full-page-section">
+    <div class="full-page-header">
+      <span class="full-page-title">英語・日本語の読み</span>
+    </div>
+    <p style="font-size:12px;line-height:1.6;color:#64748b;margin-bottom:8px">英語はカタカナ、漢字はひらがなで表示します。取得した読みはこのページ内で再利用します。表示中は追加・変更された文章をAIへ送り、読みを付けます。</p>
+    <div class="full-page-controls">
+      <button id="show-readings-btn" class="full-page-btn">読みを表示</button>
+      <button id="remove-readings-btn" class="full-page-btn" style="background:#475569">読みを外す</button>
     </div>
   </div>
 

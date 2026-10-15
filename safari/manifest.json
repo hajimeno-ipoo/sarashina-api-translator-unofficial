@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Sarashina 翻訳 (Safari)",
-  "version": "1.5.1",
-  "description": "Sarashina AI 公式Translate APIを活用したSafari用高精度AI翻訳拡張機能。選択テキスト翻訳・ポップアップ翻訳・Webサイト全体翻訳に対応。",
+  "name": "Sarashina API 翻訳（非公式） - Safari",
+  "version": "1.7.2",
+  "description": "Sarashina APIを利用する個人開発の非公式拡張機能です。SB Intuitions株式会社の提供・公認製品ではありません。選択テキスト翻訳・解説・ページ全体翻訳・英語と日本語の読み表示に対応。",
   "icons": {
     "16": "icons/icon16.png",
     "32": "icons/icon32.png",
@@ -25,7 +25,7 @@
   },
   "action": {
     "default_popup": "popup.html",
-    "default_title": "Sarashina 翻訳",
+    "default_title": "Sarashina API 翻訳（非公式）",
     "default_icon": {
       "16": "icons/icon16.png",
       "32": "icons/icon32.png",
@@ -45,9 +45,17 @@
   },
   "content_scripts": [
     {
-      "matches": ["<all_urls>"],
-      "js": ["selection-replacement.js", "content.js"],
-      "css": ["content.css"]
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "selection-replacement.js",
+        "reading.js",
+        "content.js"
+      ],
+      "css": [
+        "content.css"
+      ]
     }
   ]
 }
