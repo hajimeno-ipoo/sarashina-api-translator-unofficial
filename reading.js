@@ -245,7 +245,7 @@
     const selection = window.getSelection();
     if (!selection || selection.rangeCount !== 1 || selection.isCollapsed
         || typeof expectedText !== "string" || !expectedText.trim()
-        || selection.toString().trim() !== expectedText.trim()) throw selectionError();
+        || selection.toString().replace(/\s+/gu, " ").trim() !== expectedText.replace(/\s+/gu, " ").trim()) throw selectionError();
     const range = selection.getRangeAt(0);
     const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
     const selected = [];

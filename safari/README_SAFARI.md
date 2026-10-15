@@ -1,6 +1,6 @@
 # Sarashina API 翻訳（非公式）- Safari版の導入方法
 
-macOSのSafari向け拡張機能です。現在のバージョンは **1.8.0** です。機能の説明は [ルートのREADME](../README.md) を参照してください。
+macOSのSafari向け拡張機能です。現在のバージョンは **1.8.1** です。機能の説明は [ルートのREADME](../README.md) を参照してください。
 
 この拡張機能は個人が開発した非公式のものです。SB Intuitions株式会社が提供・公認する製品ではありません。Safariの拡張機能名は「Sarashina API 翻訳（非公式） - Safari」です。
 

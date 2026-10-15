@@ -238,7 +238,11 @@ for (const engine of engines) {
         });
         const selected = await page.evaluate(() => multilineSelection);
         assert.match(selected, /^English\n+日本語$/);
-        await startSelected(page, selected);
+        const response = await page.evaluate((sourceText) => new Promise(resolve => contentListeners[0](
+          { action: 'start_selection_readings', sourceText }, {}, resolve
+        )), selected.replace(/\s+/gu, ' ').trim());
+        assert.deepEqual(response, { success: true });
+        await page.waitForFunction(() => !SarashinaReading.getState().running);
         const sent = await sentAfter(page, 0);
         assert.equal(sent.map(text => text.trim()).join('\n'), 'English\n日本語');
         assert.equal(await page.locator('#before-selection ruby, #after-selection ruby').count(), 0);
@@ -246,6 +250,38 @@ for (const engine of engines) {
         assert.equal(await page.locator('#second-selected ruby').count(), 1);
         await page.evaluate(() => SarashinaReading.remove());
         assert.equal(await page.evaluate(() => document.getElementById('article').innerHTML === multilineOriginal), true);
+      } finally { await bounded(page.close(), 'close fixture page'); }
+    });
+
+    await t.test('context-menu spaces may match selected newlines while API text retains the exact original', async () => {
+      const page = await setup(browser);
+      try {
+        const original = 'Outside before. English\n\n日本語 Outside after.';
+        const selected = 'English\n\n日本語';
+        await page.evaluate((text) => {
+          const paragraph = document.getElementById('changing');
+          paragraph.style.whiteSpace = 'pre-wrap';
+          paragraph.textContent = text;
+        }, original);
+        assert.equal(await selectText(page, '#changing', selected), selected);
+        const rejected = await page.evaluate(() => new Promise(resolve => contentListeners[0](
+          { action: 'start_selection_readings', sourceText: 'Englizh  日本語' }, {}, resolve
+        )));
+        assert.equal(rejected.success, false, 'whitespace normalization must not accept different letters');
+        assert.equal(await requestCount(page), 0);
+        assert.equal(await page.locator('#article ruby').count(), 0);
+
+        // Observed X contextMenus input replaced two LF characters with two spaces.
+        const response = await page.evaluate(() => new Promise(resolve => contentListeners[0](
+          { action: 'start_selection_readings', sourceText: 'English  日本語' }, {}, resolve
+        )));
+        assert.deepEqual(response, { success: true });
+        await page.waitForFunction(() => !SarashinaReading.getState().running);
+        assert.deepEqual(await sentAfter(page, 0), [selected], 'API input keeps both original LF characters');
+        assert.equal(await page.locator('#changing ruby').count(), 2);
+        assert.equal(await page.locator('#article > :not(#changing) ruby').count(), 0);
+        await page.evaluate(() => SarashinaReading.remove());
+        assert.equal(await page.textContent('#changing'), original);
       } finally { await bounded(page.close(), 'close fixture page'); }
     });
 
