@@ -1,0 +1,9 @@
+/* content.css - Sarashina 翻訳 外部ラッパー用スタイル */
+#sarashina-translator-container {
+  all: initial;
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  z-index: 2147483647;
+  pointer-events: auto;
+}

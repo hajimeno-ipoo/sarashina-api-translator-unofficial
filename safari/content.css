@@ -1,0 +1,19 @@
+/* safari/content.css - Sarashina 翻訳 外部コンテナ用スタイル */
+#sarashina-translator-container {
+  all: initial;
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  z-index: 2147483647;
+  pointer-events: auto;
+}
+
+#sarashina-page-bar-container {
+  all: initial;
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  z-index: 2147483647;
+  pointer-events: auto;
+}

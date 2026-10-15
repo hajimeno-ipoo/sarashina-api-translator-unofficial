@@ -1,0 +1,34 @@
+# macOS・Xcodeの個人設定と生成物
+.DS_Store
+**/xcuserdata/
+*.xcuserstate
+DerivedData/
+build/
+.build/
+*.app/
+*.appex/
+*.xcarchive/
+*.dSYM/
+*.dmg
+*.zip
+*.log
+
+# ローカル設定・資格情報
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.p8
+*.mobileprovision
+*.provisionprofile
+node_modules/
+
+# 個人用の開発ツール設定と作業記録
+/.serena/
+/.codex/
+/.agents/
+/AGENTS.md
+/FOR*.md
+/docs/20261013_sarashina_translator/

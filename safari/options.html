@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sarashina 翻訳 (Safari) - 設定</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
+      background-color: #f8fafc;
+      color: #0f172a;
+      line-height: 1.6;
+      padding: 40px 20px;
+    }
+    .container {
+      max-width: 640px;
+      margin: 0 auto;
+      background: #ffffff;
+      padding: 32px;
+      border-radius: 16px;
+      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -2px rgba(0, 0, 0, 0.05);
+      border: 1px solid #e2e8f0;
+    }
+    .header {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      margin-bottom: 24px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid #e2e8f0;
+    }
+    .header-icon {
+      width: 48px;
+      height: 48px;
+      border-radius: 10px;
+    }
+    .header h1 {
+      font-size: 20px;
+      font-weight: 700;
+      color: #0f172a;
+    }
+    .subtitle {
+      font-size: 13px;
+      color: #64748b;
+      margin-top: 2px;
+    }
+    .info-card {
+      background: #eff6ff;
+      border: 1px solid #bfdbfe;
+      border-radius: 8px;
+      padding: 12px 16px;
+      font-size: 13px;
+      color: #1e40af;
+      margin-bottom: 20px;
+      line-height: 1.5;
+    }
+    .form-group {
+      margin-bottom: 20px;
+    }
+    label {
+      display: block;
+      font-size: 13px;
+      font-weight: 600;
+      color: #334155;
+      margin-bottom: 6px;
+    }
+    .helper-text {
+      font-size: 12px;
+      color: #64748b;
+      margin-bottom: 6px;
+    }
+    .input-wrapper {
+      position: relative;
+      display: flex;
+    }
+    input[type="text"],
+    input[type="password"],
+    select {
+      width: 100%;
+      padding: 10px 12px;
+      border: 1px solid #cbd5e1;
+      border-radius: 8px;
+      font-size: 14px;
+      color: #1e293b;
+      background-color: #ffffff;
+      font-family: inherit;
+    }
+    input:focus,
+    select:focus {
+      outline: none;
+      border-color: #e11d48;
+      box-shadow: 0 0 0 3px rgba(225, 29, 72, 0.15);
+    }
+    .toggle-visibility-btn {
+      position: absolute;
+      right: 10px;
+      top: 50%;
+      transform: translateY(-50%);
+      background: none;
+      border: none;
+      cursor: pointer;
+      font-size: 14px;
+      color: #64748b;
+      padding: 4px;
+    }
+    .actions {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-top: 32px;
+      padding-top: 20px;
+      border-top: 1px solid #e2e8f0;
+    }
+    .btn {
+      padding: 10px 20px;
+      font-size: 14px;
+      font-weight: 600;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .btn-secondary {
+      background: #f1f5f9;
+      color: #334155;
+      border: 1px solid #cbd5e1;
+    }
+    .btn-secondary:hover {
+      background: #e2e8f0;
+    }
+    .btn-primary {
+      background: #e11d48;
+      color: #ffffff;
+      border: none;
+    }
+    .btn-primary:hover {
+      background: #be123c;
+    }
+    .status-msg {
+      margin-top: 16px;
+      padding: 12px 16px;
+      border-radius: 8px;
+      font-size: 13px;
+      display: none;
+      word-break: break-all;
+    }
+    .status-msg.success {
+      background: #f0fdf4;
+      color: #166534;
+      border: 1px solid #bbf7d0;
+      display: block;
+    }
+    .status-msg.error {
+      background: #fef2f2;
+      color: #991b1b;
+      border: 1px solid #fecaca;
+      display: block;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <img src="icons/icon48.png" alt="Torii Icon" class="header-icon">
+      <div>
+        <h1>Sarashina 翻訳 (Safari) - 設定</h1>
+        <div class="subtitle">Safari拡張機能用の Sarashina API 接続設定を行います</div>
+      </div>
+    </div>
+
+    <div class="info-card">
+      <strong>💡 Safari Web Extensions 対応</strong><br>
+      公式の <code>sarashina3-translate</code> API を利用し、Safari 内で快適・高精度な翻訳を利用できます。
+    </div>
+
+    <form id="settings-form">
+      <div class="form-group">
+        <label for="api-key">Sarashina API キー <span style="color:#ef4444;">*</span></label>
+        <div class="helper-text">Sarashina AIダッシュボード（chat.sarashina.ai）で発行したAPIキーだけを入力してください。Bearer は付けません。</div>
+        <div class="input-wrapper">
+          <input type="password" id="api-key" placeholder="APIキーを入力" required autocomplete="off">
+          <button type="button" id="toggle-key-visibility" class="toggle-visibility-btn" title="表示/非表示">👁️</button>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label for="page-default-direction">ページ全体翻訳のデフォルト方向</label>
+        <div class="helper-text">Webサイト全体翻訳を実行したときの基本方向</div>
+        <select id="page-default-direction">
+          <option value="en_to_ja" selected>英語 → 日本語（日本語はそのまま保持）</option>
+          <option value="ja_to_en">日本語 → 英語（日本語の文章を英語化）</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label for="api-mode">API モード</label>
+        <div class="helper-text">利用するAPIの種類を選択します。通常は公式の「Translate API」をご利用ください。</div>
+        <select id="api-mode">
+          <option value="translate" selected>Translate API (推奨: sarashina3-translate 日英・英日特化)</option>
+          <option value="chat">Chat Completions API (対話モデルによる翻訳)</option>
+        </select>
+      </div>
+
+      <div id="chat-model-group" class="form-group" style="display: none;">
+        <label for="chat-model">Chat モデル名</label>
+        <div class="helper-text">Chat Completions API 利用時のモデル（公式仕様: sarashina3-mini / sarashina3-nano）</div>
+        <select id="chat-model">
+          <option value="sarashina3-mini" selected>sarashina3-mini (標準対話モデル)</option>
+          <option value="sarashina3-nano">sarashina3-nano (高速・軽量モデル)</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label for="api-base-url">API ベース URL</label>
+        <div class="helper-text">エンドポイントのベースURLです（公式デフォルト: https://api.sarashina.ai/v1）。接続テスト時にSafariからアクセス許可を求められたら、APIサイトを許可してください。</div>
+        <input type="text" id="api-base-url" placeholder="https://api.sarashina.ai/v1">
+      </div>
+
+      <div id="status-box" class="status-msg"></div>
+
+      <div class="actions">
+        <button type="button" id="test-btn" class="btn btn-secondary">接続テスト</button>
+        <button type="submit" id="save-btn" class="btn btn-primary">設定を保存</button>
+      </div>
+    </form>
+  </div>
+
+  <script src="options.js"></script>
+</body>
+</html>
