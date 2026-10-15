@@ -16,21 +16,25 @@ const valid = { items: [{ id: 'p1', readings: [
   { tokenId: 'w2', reading: 'にほんご' }
 ] }] };
 
-function app(platform, { output = valid, status = 200, key = 'test-key', granted = true, finishReason = 'stop' } = {}) {
+function app(platform, { output = valid, status = 200, key = 'test-key', granted = true, finishReason = 'stop', selectionError = false } = {}) {
   let listener;
+  let installed;
+  let clicked;
   let now = 100000;
   const requests = [];
   const waits = [];
   const messages = [];
   const permissions = [];
+  const menus = [];
   const ext = {
-    runtime: { onInstalled: { addListener() {} }, onMessage: { addListener(fn) { listener = fn; } } },
-    contextMenus: { create() {}, onClicked: { addListener() {} } },
+    runtime: { onInstalled: { addListener(fn) { installed = fn; } }, onMessage: { addListener(fn) { listener = fn; } } },
+    contextMenus: { create(menu) { menus.push(plain(menu)); }, onClicked: { addListener(fn) { clicked = fn; } } },
     commands: { onCommand: { addListener() {} } },
-    storage: { sync: { get(defaults, done) { done({ ...defaults, apiKey: key }); } } },
+    storage: { sync: { get(defaults, done) { done({ ...defaults, apiKey: key }); }, set() {} } },
     permissions: { async contains(value) { permissions.push(plain(value)); return granted; } },
     tabs: { async sendMessage(tabId, message, options) {
       messages.push({ tabId, ...plain(message), options: plain(options) });
+      if (selectionError && message.action === 'start_selection_readings') throw new Error('Selected frame disappeared');
       return message.action === 'ping' ? { pong: true } : { success: true };
     } }
   };
@@ -52,7 +56,9 @@ function app(platform, { output = valid, status = 200, key = 'test-key', granted
   });
   vm.runInContext(fs.readFileSync(path.resolve(__dirname, '..', platform === 'Chrome' ? 'background.js' : 'safari/background.js'), 'utf8'), context);
   return {
-    requests, waits, messages, permissions,
+    requests, waits, messages, permissions, menus,
+    install() { return installed(); },
+    click(info, tab = { id: 42 }) { return clicked(info, tab); },
     async message(message) {
       return plain(await new Promise(resolve => {
         let synchronous = false;
@@ -65,6 +71,32 @@ function app(platform, { output = valid, status = 200, key = 'test-key', granted
 }
 
 for (const platform of ['Chrome', 'Safari']) {
+  test(`${platform}: registers selection readings and routes trimmed text only to the selected frame`, async () => {
+    const instance = app(platform);
+    instance.install();
+    assert.deepEqual(instance.menus.find(menu => menu.id === 'sarashina-read-selection'), {
+      id: 'sarashina-read-selection', title: 'Sarashinaで選択部分に読みを付ける', contexts: ['selection']
+    });
+    await instance.click({ menuItemId: 'sarashina-read-selection', selectionText: '  English 日本語  ', frameId: 3 });
+    assert.deepEqual(instance.messages, [
+      { tabId: 42, action: 'ping', options: { frameId: 3 } },
+      { tabId: 42, action: 'start_selection_readings', sourceText: 'English 日本語', options: { frameId: 3 } }
+    ]);
+    assert.equal(instance.requests.length, 0);
+  });
+
+  test(`${platform}: invalid or unavailable selected targets never fall back to the entire page`, async () => {
+    const instance = app(platform, { selectionError: true });
+    await instance.click({ menuItemId: 'sarashina-read-selection', selectionText: '   ', frameId: 3 });
+    await instance.click({ menuItemId: 'sarashina-read-selection', selectionText: 'English', frameId: 3 }, { id: -1 });
+    assert.deepEqual(instance.messages, []);
+    await instance.click({ menuItemId: 'sarashina-read-selection', selectionText: 'English', frameId: 3 });
+    assert.deepEqual(instance.messages.map(({ action, options }) => ({ action, frameId: options.frameId })), [
+      { action: 'ping', frameId: 3 }, { action: 'start_selection_readings', frameId: 3 }
+    ]);
+    assert.equal(instance.requests.length, 0);
+  });
+
   test(`${platform}: generates structured contextual readings and preserves exact text`, async () => {
     const instance = app(platform);
     const result = await instance.readings();

@@ -92,6 +92,18 @@
       return;
     }
 
+    if (message.action === "start_selection_readings") {
+      const reading = globalThis.SarashinaReading;
+      if (!reading) {
+        sendResponse({ success: false, error: "拡張機能と対象ページを再読み込みしてください。" });
+      } else if (isPageTranslating) {
+        sendResponse({ success: false, error: "ページの翻訳が終わってから、読みを表示してください。" });
+      } else {
+        sendResponse(reading.startSelection(message.sourceText));
+      }
+      return;
+    }
+
     if (message.action === "start_page_readings" || message.action === "remove_page_readings") {
       const reading = globalThis.SarashinaReading;
       if (!reading) {

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Sarashina API 翻訳（非公式） - Safari",
-  "version": "1.7.2",
+  "version": "1.8.0",
   "description": "Sarashina APIを利用する個人開発の非公式拡張機能です。SB Intuitions株式会社の提供・公認製品ではありません。選択テキスト翻訳・解説・ページ全体翻訳・英語と日本語の読み表示に対応。",
   "icons": {
     "16": "icons/icon16.png",

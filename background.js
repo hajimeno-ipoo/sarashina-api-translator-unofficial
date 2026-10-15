@@ -24,6 +24,12 @@ chrome.runtime.onInstalled.addListener(() => {
   });
 
   chrome.contextMenus.create({
+    id: "sarashina-read-selection",
+    title: "Sarashinaで選択部分に読みを付ける",
+    contexts: ["selection"]
+  });
+
+  chrome.contextMenus.create({
     id: "sarashina-translate-page-en-to-ja",
     title: "Sarashinaでページ全体を翻訳 (英語 → 日本語)",
     contexts: ["page"]
@@ -81,6 +87,21 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   if (!Number.isInteger(tab?.id) || tab.id < 0) return;
 
   // 1. 選択テキスト翻訳
+  if (info.menuItemId === "sarashina-read-selection") {
+    const sourceText = (info.selectionText || "").trim();
+    if (!sourceText) return;
+    const frameId = info.frameId || 0;
+    try {
+      await ensureContentScriptLoaded(tab.id, frameId);
+      await chrome.tabs.sendMessage(tab.id, {
+        action: "start_selection_readings", sourceText
+      }, { frameId });
+    } catch (error) {
+      console.warn("選択部分の読み付けを起動できませんでした:", error);
+    }
+    return;
+  }
+
   if (info.menuItemId === "sarashina-translate-selection" || info.menuItemId === "sarashina-explain-selection") {
     const selectedText = (info.selectionText || "").trim();
     if (!selectedText) return;

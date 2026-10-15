@@ -8,6 +8,8 @@
   let generation = 0;
   let running = false;
   let enabled = false;
+  let mode = "page";
+  let selectionParts = null;
   let dirty = false;
   let updateTimer = null;
   let activePromise = null;
@@ -33,7 +35,7 @@
   }
 
   function observe() {
-    if (enabled) observer.observe(document.documentElement, {
+    if (enabled && mode === "page") observer.observe(document.documentElement, {
       childList: true, characterData: true, subtree: true, attributes: true,
       attributeFilter: ["class", "style", "hidden", "aria-hidden", "contenteditable"]
     });
@@ -41,7 +43,7 @@
 
   function ownDOM(work) {
     if (ownDOMDepth++ === 0) {
-      if (enabled && observer.takeRecords().some(isRelevantMutation)) dirty = true;
+      if (enabled && mode === "page" && observer.takeRecords().some(isRelevantMutation)) dirty = true;
       observer.disconnect();
     }
     try { return work(); }
@@ -75,13 +77,13 @@
       remove.type = "button";
       remove.onclick = () => {
         if (enabled) removeReadings(true);
-        else void start();
+        else void resume();
       };
       panel.append(status, remove);
       shadow.append(style, panel);
       document.documentElement.append(bar);
     }
-    bar.shadowRoot.querySelector("[role=status]").textContent = message;
+    bar.shadowRoot.querySelector("[role=status]").textContent = mode === "selection" ? `選択部分: ${message}` : message;
     bar.shadowRoot.querySelector("button").textContent = enabled ? "読みを外す" : "再表示";
   }
 
@@ -181,7 +183,8 @@
     const edits = new Map();
     for (const item of batch) {
       // 文脈が変わっていた場合、その文の読みを適用しない。
-      if (item.run.parts.some(part => !part.node.isConnected || part.node.nodeValue !== part.text)) {
+      if (item.run.parts.some(part => !part.node.isConnected || part.node.nodeValue !== part.text
+          || (part.parent && part.node.parentNode !== part.parent))) {
         skipped++; continue;
       }
       let offset = item.offset;
@@ -191,7 +194,7 @@
           const part = item.run.parts.find(value => value.start <= offset && value.end >= end);
           if (part) {
             if (!edits.has(part.node)) edits.set(part.node, []);
-            edits.get(part.node).push({ start: offset - part.start, end: end - part.start, reading: segment.reading });
+            edits.get(part.node).push({ start: offset - part.start + (part.sourceOffset || 0), end: end - part.start + (part.sourceOffset || 0), reading: segment.reading });
           } else skipped++;
         }
         offset = end;
@@ -222,13 +225,101 @@
     }
   }
 
+  function recordUnchanged(record) {
+    const { nodes, html } = record;
+    return nodes.every((node, index) => node.isConnected
+      && node.parentNode === nodes[0].parentNode
+      && (index === 0 || nodes[index - 1].nextSibling === node)
+      && (node.nodeType === Node.TEXT_NODE ? node.nodeValue : node.outerHTML) === html[index]);
+  }
+
+  function selectionError() {
+    return new Error("選択範囲の本文が変わりました。読みを付ける文章を選び直してください。");
+  }
+
+  function captureSelection(expectedText) {
+    const active = document.activeElement;
+    if (active?.matches("input,textarea,select") || active?.isContentEditable) {
+      throw new Error("入力欄にはルビを表示できません。ページ本文を選び直してください。");
+    }
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount !== 1 || selection.isCollapsed
+        || typeof expectedText !== "string" || !expectedText.trim()
+        || selection.toString().trim() !== expectedText.trim()) throw selectionError();
+    const range = selection.getRangeAt(0);
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    const selected = [];
+    let node;
+    while ((node = walker.nextNode())) {
+      if (!range.intersectsNode(node)) continue;
+      const start = range.startContainer === node ? range.startOffset : 0;
+      const end = range.endContainer === node ? range.endOffset : node.nodeValue.length;
+      if (start >= end) continue;
+      const parent = node.parentElement;
+      let hidden = false;
+      for (let ancestor = parent; ancestor; ancestor = ancestor.parentElement) {
+        const style = getComputedStyle(ancestor);
+        if (ancestor.hidden || style.display === "none" || style.visibility === "hidden") {
+          hidden = true;
+          break;
+        }
+      }
+      if (hidden) continue;
+      const record = records.find(value => value.nodes.some(element => element === node || element.contains?.(node)));
+      if (parent?.closest("rt")) {
+        if (record) continue;
+        throw new Error("既存のルビを含む範囲には読みを付けられません。本文を選び直してください。");
+      }
+      const exclusion = record ? EXCLUDED.replace(",ruby,rt,", ",") : EXCLUDED;
+      if (!parent || parent.closest(exclusion) || parent.closest("[id^='sarashina-']") || skipElement(parent)) {
+        throw new Error("入力欄・コード・既存のルビなどは対象外です。本文を選び直してください。");
+      }
+      let source = node, sourceStart = start, sourceEnd = end;
+      if (record) {
+        if (!recordUnchanged(record)) throw selectionError();
+        let offset = 0;
+        let found = false;
+        for (const generated of record.nodes) {
+          const base = generated.nodeType === Node.TEXT_NODE ? generated : generated.firstChild;
+          if (base === node) { source = record.original; sourceStart += offset; sourceEnd += offset; found = true; break; }
+          offset += base?.textContent.length || 0;
+        }
+        if (!found) throw selectionError();
+      }
+      const previous = selected[selected.length - 1];
+      if (previous?.node === source && previous.end === sourceStart) previous.end = sourceEnd;
+      else selected.push({ node: source, text: source.nodeValue, start: sourceStart, end: sourceEnd,
+        parent: record ? record.nodes[0].parentNode : source.parentNode });
+    }
+    if (!selected.length || !/[A-Za-z\p{Script=Han}]/u.test(selected.map(part => part.text.slice(part.start, part.end)).join(""))) {
+      throw new Error("選択範囲に読みを付ける英語・漢字がありません。本文を選び直してください。");
+    }
+    return selected;
+  }
+
+  function collectSelectionRuns() {
+    if (!selectionParts?.length) throw selectionError();
+    const runs = [];
+    let previous = null;
+    for (const part of selectionParts) {
+      if (!part.node.isConnected || part.node.nodeValue !== part.text || part.node.parentNode !== part.parent
+          || (previous && !(previous.node.compareDocumentPosition(part.node) & Node.DOCUMENT_POSITION_FOLLOWING))) throw selectionError();
+      const owner = part.node.parentElement.closest([...BLOCKS].join(",")) || part.parent;
+      let run = runs[runs.length - 1];
+      if (!run || run.owner !== owner) { run = { owner, text: "", parts: [] }; runs.push(run); }
+      const start = run.text.length;
+      run.text += part.text.slice(part.start, part.end);
+      run.parts.push({ node: part.node, text: part.text, parent: part.parent,
+        sourceOffset: part.start, start, end: run.text.length });
+      previous = part;
+    }
+    return runs;
+  }
+
   function restoreRecords() {
     for (const record of records) {
-      const { original, nodes, html } = record;
-      const unchanged = nodes.every((node, index) => node.isConnected
-        && node.parentNode === nodes[0].parentNode
-        && (index === 0 || nodes[index - 1].nextSibling === node)
-        && (node.nodeType === Node.TEXT_NODE ? node.nodeValue : node.outerHTML) === html[index]);
+      const { original, nodes } = record;
+      const unchanged = recordUnchanged(record);
       if (unchanged) {
         nodes[0].before(original);
         nodes.forEach(node => node.remove());
@@ -317,7 +408,7 @@
       let batches;
       ownDOM(() => {
         restoreRecords();
-        batches = makeBatches(collectRuns());
+        batches = makeBatches(mode === "selection" ? collectSelectionRuns() : collectRuns());
         for (const item of batches.flat()) { if (cache.has(item.key)) cacheHitCount++; }
         // 元へ戻す処理とキャッシュ表示を同じ同期処理で済ませる。
         for (const run of new Set(batches.flat().map(item => item.run))) applyCachedRun(run);
@@ -347,19 +438,48 @@
     }
   }
 
-  function start() {
+  function resume() {
     if (enabled && running) return activePromise || Promise.resolve();
     clearTimeout(updateTimer);
     updateTimer = null;
+    if (mode === "selection" && !records.length) {
+      try { collectSelectionRuns(); }
+      catch (error) { showStatus(error.message); return Promise.resolve(); }
+    }
     enabled = true;
     observe();
     activePromise = refresh(++generation);
     return activePromise;
   }
 
+  function start() {
+    if (mode !== "page") {
+      removeReadings();
+      mode = "page";
+      selectionParts = null;
+    }
+    return resume();
+  }
+
+  function startSelection(expectedText) {
+    let selected;
+    try { selected = captureSelection(expectedText); }
+    catch (error) {
+      // 選択取得の失敗後に「再表示」からページ全体を送信しない。
+      if (!enabled && !selectionParts) mode = "selection";
+      showStatus(error.message);
+      return { success: false, error: error.message };
+    }
+    removeReadings();
+    mode = "selection";
+    selectionParts = selected;
+    void resume();
+    return { success: true };
+  }
+
   globalThis.SarashinaReading = {
-    start, remove: removeReadings,
+    start, startSelection, resume, remove: removeReadings,
     configure(options) { if (options?.skipElement) skipElement = options.skipElement; },
-    getState() { return { running, count, skipped, enabled, cachedCount: cache.size, requestCount, cacheHitCount }; }
+    getState() { return { running, count, skipped, enabled, mode, cachedCount: cache.size, requestCount, cacheHitCount }; }
   };
 })();

@@ -112,11 +112,253 @@ async function expectNoNewRequests(page, before, milliseconds = 1400) {
   assert.equal(await requestCount(page), before);
 }
 
+async function selectText(page, selector, text, occurrence = 0) {
+  return page.evaluate(({ selector, text, occurrence }) => {
+    const root = document.querySelector(selector);
+    const nodes = [];
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+      acceptNode: (node) => node.parentElement.closest('rt,rp') ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT
+    });
+    let node;
+    let joined = '';
+    while ((node = walker.nextNode())) {
+      nodes.push({ node, start: joined.length, end: joined.length + node.nodeValue.length });
+      joined += node.nodeValue;
+    }
+    let offset = -1;
+    for (let index = 0; index <= occurrence; index++) offset = joined.indexOf(text, offset + 1);
+    if (offset < 0) throw new Error('Requested fixture selection not found');
+    const first = nodes.find(part => part.start <= offset && part.end > offset);
+    const end = offset + text.length;
+    const last = nodes.find(part => part.start < end && part.end >= end);
+    const range = document.createRange();
+    range.setStart(first.node, offset - first.start);
+    range.setEnd(last.node, end - last.start);
+    const selection = window.getSelection();
+    selection.removeAllRanges(); selection.addRange(range);
+    return selection.toString();
+  }, { selector, text, occurrence });
+}
+
+async function startSelected(page, text) {
+  const result = await page.evaluate(expected => SarashinaReading.startSelection(expected), text);
+  assert.deepEqual(result, { success: true });
+  await page.waitForFunction(() => !SarashinaReading.getState().running);
+}
+
 for (const engine of engines) {
   test(`${engine}: reading DOM behavior (mock AI; no live accuracy assertion)`, { timeout: 120000 }, async (t) => {
     const executablePath = process.env[`READING_${engine.toUpperCase()}_EXECUTABLE`];
     const browser = await playwright[engine].launch({ headless: true, timeout: 15000, ...(executablePath ? { executablePath } : {}) });
     t.after(() => bounded(browser.close(), 'close test browser'));
+
+    await t.test('a partial TextNode sends and annotates only its selected characters', async () => {
+      const page = await setup(browser);
+      try {
+        await page.evaluate(() => { document.getElementById('changing').textContent = 'Before English 日本語 after.'; });
+        assert.equal(await selectText(page, '#changing', 'English 日本語'), 'English 日本語');
+        const response = await page.evaluate(() => new Promise(resolve => contentListeners[0](
+          { action: 'start_selection_readings', sourceText: 'English 日本語' }, {}, resolve
+        )));
+        assert.deepEqual(response, { success: true });
+        await page.waitForFunction(() => !SarashinaReading.getState().running);
+        assert.deepEqual(await sentAfter(page, 0), ['English 日本語']);
+        assert.equal(await page.locator('#changing ruby').count(), 2);
+        assert.equal(await page.locator('#article > :not(#changing) ruby').count(), 0);
+        await page.evaluate(() => SarashinaReading.remove());
+        assert.equal(await page.textContent('#changing'), 'Before English 日本語 after.');
+      } finally { await bounded(page.close(), 'close fixture page'); }
+    });
+
+    await t.test('selection across inline link and bold preserves original elements and restores exactly', async () => {
+      const page = await setup(browser);
+      try {
+        await selectText(page, '#inline', 'English and 日本語');
+        await startSelected(page, 'English and 日本語');
+        assert.deepEqual(await sentAfter(page, 0), ['English and 日本語']);
+        assert.equal(await page.locator('#original-link ruby').count(), 1);
+        assert.equal(await page.locator('#original-bold ruby').count(), 1);
+        await page.click('#original-link');
+        assert.equal(await page.evaluate(() => linkClicks), 1);
+        await page.evaluate(() => SarashinaReading.remove());
+        assert.equal(await page.evaluate(() => document.getElementById('article').innerHTML === beforeArticle
+          && originalLink === document.getElementById('original-link') && originalBold === document.getElementById('original-bold')), true);
+      } finally { await bounded(page.close(), 'close fixture page'); }
+    });
+
+    await t.test('selection never sends hidden descendants absent from its visible text', async () => {
+      const page = await setup(browser);
+      try {
+        await page.evaluate(() => {
+          const paragraph = document.getElementById('changing');
+          paragraph.replaceChildren(document.createTextNode('English '));
+          for (const kind of ['display-none', 'hidden-attribute']) {
+            const hidden = document.createElement('span');
+            hidden.textContent = `Secret-${kind} 日本語`;
+            if (kind === 'display-none') hidden.style.display = 'none';
+            else hidden.hidden = true;
+            paragraph.append(hidden);
+          }
+          paragraph.append(document.createTextNode('日本語'));
+          const range = document.createRange(); range.selectNodeContents(paragraph);
+          const selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(range);
+          window.visibleSelectedText = selection.toString();
+        });
+        const selected = await page.evaluate(() => visibleSelectedText);
+        assert.equal(selected, 'English 日本語');
+        await startSelected(page, selected);
+        assert.deepEqual(await sentAfter(page, 0), ['English 日本語']);
+        assert.equal(await page.locator('#changing span ruby').count(), 0);
+        assert.equal(await page.locator('#changing ruby').count(), 2);
+        await page.evaluate(() => SarashinaReading.remove());
+        assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('#changing span')].map(span => span.textContent)), [
+          'Secret-display-none 日本語', 'Secret-hidden-attribute 日本語'
+        ]);
+      } finally { await bounded(page.close(), 'close fixture page'); }
+    });
+
+    await t.test('selection spanning paragraphs preserves actual line breaks and sends no surrounding text', async () => {
+      const page = await setup(browser);
+      try {
+        await page.evaluate(() => {
+          const article = document.getElementById('article');
+          article.replaceChildren();
+          for (const [id, text] of [
+            ['before-selection', 'Outside before.'], ['first-selected', 'Before English'],
+            ['second-selected', '日本語 after.'], ['after-selection', 'Outside after.']
+          ]) {
+            const paragraph = document.createElement('p'); paragraph.id = id; paragraph.textContent = text; article.append(paragraph);
+          }
+          window.multilineOriginal = article.innerHTML;
+          const range = document.createRange();
+          range.setStart(document.getElementById('first-selected').firstChild, 'Before '.length);
+          range.setEnd(document.getElementById('second-selected').firstChild, '日本語'.length);
+          const selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(range);
+          window.multilineSelection = selection.toString();
+        });
+        const selected = await page.evaluate(() => multilineSelection);
+        assert.match(selected, /^English\n+日本語$/);
+        await startSelected(page, selected);
+        const sent = await sentAfter(page, 0);
+        assert.equal(sent.map(text => text.trim()).join('\n'), 'English\n日本語');
+        assert.equal(await page.locator('#before-selection ruby, #after-selection ruby').count(), 0);
+        assert.equal(await page.locator('#first-selected ruby').count(), 1);
+        assert.equal(await page.locator('#second-selected ruby').count(), 1);
+        await page.evaluate(() => SarashinaReading.remove());
+        assert.equal(await page.evaluate(() => document.getElementById('article').innerHTML === multilineOriginal), true);
+      } finally { await bounded(page.close(), 'close fixture page'); }
+    });
+
+    await t.test('identical text elsewhere is untouched and page additions do not expand selection mode', async () => {
+      const page = await setup(browser);
+      try {
+        await page.evaluate(() => { document.getElementById('changing').textContent = 'English and English.'; });
+        await selectText(page, '#changing', 'English', 1);
+        await startSelected(page, 'English');
+        const before = await requestCount(page);
+        assert.equal(await page.locator('#changing ruby').count(), 1);
+        assert.equal(await page.evaluate(() => document.getElementById('changing').firstChild.nodeValue), 'English and ');
+        await page.evaluate(() => {
+          const paragraph = document.createElement('p'); paragraph.id = 'unselected-added';
+          paragraph.textContent = 'New English paragraph.'; document.getElementById('article').append(paragraph);
+        });
+        await expectNoNewRequests(page, before);
+        assert.equal(await page.locator('#unselected-added ruby').count(), 0);
+        await page.evaluate(() => SarashinaReading.remove());
+        assert.equal(await page.textContent('#changing'), 'English and English.');
+      } finally { await bounded(page.close(), 'close fixture page'); }
+    });
+
+    await t.test('selection controls redisplay cached range but require reselection after a hidden edit', async () => {
+      const page = await setup(browser);
+      try {
+        await selectText(page, '#changing', 'English');
+        await startSelected(page, 'English');
+        const before = await requestCount(page);
+        await page.getByRole('button', { name: '読みを外す', exact: true }).click();
+        await page.getByRole('button', { name: '再表示', exact: true }).click();
+        await page.waitForFunction(() => !SarashinaReading.getState().running && document.querySelector('#changing ruby'));
+        assert.equal(await requestCount(page), before);
+        assert.equal(await page.locator('#changing ruby').count(), 1);
+        await page.getByRole('button', { name: '読みを外す', exact: true }).click();
+        await page.evaluate(() => { document.getElementById('changing').textContent = 'Updated English context.'; });
+        await page.getByRole('button', { name: '再表示', exact: true }).click();
+        await expectNoNewRequests(page, before);
+        assert.equal(await page.locator('#article ruby').count(), 0);
+        assert.match(await page.evaluate(() => document.getElementById('sarashina-reading-bar').shadowRoot.textContent), /選び直/);
+        assert.equal(await page.textContent('#changing'), 'Updated English context.');
+      } finally { await bounded(page.close(), 'close fixture page'); }
+    });
+
+    await t.test('switching between page and selection modes never retains unselected readings', async () => {
+      const page = await setup(browser);
+      try {
+        await selectText(page, '#changing', 'English');
+        await startSelected(page, 'English');
+        assert.equal(await page.locator('#article ruby').count(), 1);
+        await page.evaluate(() => SarashinaReading.start());
+        assert.ok(await page.locator('#article ruby').count() > 1);
+        // A real Range inside the displayed ruby selects only its base text.
+        await selectText(page, '#original-link', 'English');
+        await startSelected(page, 'English');
+        assert.equal(await page.locator('#article ruby').count(), 1);
+        assert.equal(await page.locator('#original-link ruby').count(), 1);
+        await page.evaluate(() => SarashinaReading.remove());
+        assert.equal(await page.evaluate(() => document.getElementById('article').innerHTML === beforeArticle), true);
+      } finally { await bounded(page.close(), 'close fixture page'); }
+    });
+
+    await t.test('absent, mismatched and editable selections fail without any page-wide request', async () => {
+      const page = await setup(browser);
+      try {
+        assert.equal((await page.evaluate(() => SarashinaReading.startSelection('English'))).success, false);
+        await page.getByRole('button', { name: '再表示', exact: true }).click();
+        await expectNoNewRequests(page, 0);
+        await selectText(page, '#changing', 'English');
+        assert.equal((await page.evaluate(() => SarashinaReading.startSelection('different selection'))).success, false);
+        await selectText(page, '#editable', 'Editable 日本語');
+        assert.equal((await page.evaluate(() => SarashinaReading.startSelection('Editable 日本語'))).success, false);
+        await page.evaluate(() => { const input = document.getElementById('input'); input.focus(); input.setSelectionRange(0, 5); });
+        assert.equal((await page.evaluate(() => SarashinaReading.startSelection('Input'))).success, false);
+        // 入力欄の選択と同じ文字が本文の古いSelectionに残っていても使わない。
+        await page.evaluate(() => document.activeElement.blur());
+        await selectText(page, '#changing', 'English');
+        await page.evaluate(() => {
+          const input = document.getElementById('input'); input.value = 'English';
+          input.focus(); input.setSelectionRange(0, input.value.length);
+        });
+        assert.equal((await page.evaluate(() => SarashinaReading.startSelection('English'))).success, false);
+        assert.equal(await requestCount(page), 0);
+        assert.equal(await page.locator('#article ruby').count(), 0);
+      } finally { await bounded(page.close(), 'close fixture page'); }
+    });
+
+    await t.test('hiding or changing a pending selection never applies old readings outside a valid range', async () => {
+      for (const mutation of ['hide', 'change', 'move']) {
+        const page = await setup(browser, 'deferred');
+        try {
+          await selectText(page, '#changing', 'English');
+          assert.deepEqual(await page.evaluate(() => SarashinaReading.startSelection('English')), { success: true });
+          await page.waitForFunction(() => replyWaiters.length > 0);
+          const before = await requestCount(page);
+          await page.evaluate((change) => {
+            if (change === 'hide') SarashinaReading.remove();
+            else if (change === 'move') {
+              const paragraph = document.getElementById('changing');
+              const original = paragraph.firstChild;
+              const wrapper = document.createElement('span');
+              paragraph.append(wrapper); wrapper.append(original);
+            }
+            else document.getElementById('changing').textContent = 'Updated English context.';
+            window.mockMode = 'normal'; window.replyWaiters.splice(0).forEach(resolve => resolve());
+          }, mutation);
+          await page.waitForFunction(() => !SarashinaReading.getState().running);
+          await expectNoNewRequests(page, before);
+          assert.equal(await page.locator('#article ruby').count(), 0);
+          assert.equal(await page.textContent('#changing'), mutation === 'change' ? 'Updated English context.' : 'Original English.');
+        } finally { await bounded(page.close(), 'close fixture page'); }
+      }
+    });
 
     await t.test('context, mixed languages, inline markup, clicks and exact restoration', async () => {
       const page = await setup(browser);
