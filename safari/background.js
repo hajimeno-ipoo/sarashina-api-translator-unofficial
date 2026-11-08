@@ -44,14 +44,14 @@ async function openStartupTermsNotice() {
   const { startupTermsNoticeShown } = await ext.storage.local.get("startupTermsNoticeShown");
   if (startupTermsNoticeShown) return;
 
-  const noticeWindow = await ext.windows.create({
-    url: ext.runtime.getURL("terms-notice.html"),
-    type: "popup",
-    width: 460,
-    height: 340
-  });
-  if (!noticeWindow) throw new Error("注意書きのウィンドウを作成できませんでした。");
-  await ext.storage.local.set({ startupTermsNoticeShown: true });
+  const normalPopup = await ext.action.getPopup({});
+  await ext.action.setPopup({ popup: "terms-notice.html" });
+  try {
+    await ext.action.openPopup();
+    await ext.storage.local.set({ startupTermsNoticeShown: true });
+  } finally {
+    await ext.action.setPopup({ popup: normalPopup });
+  }
 }
 
 function showStartupTermsNoticeOnce() {

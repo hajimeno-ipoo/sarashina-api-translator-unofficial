@@ -56,7 +56,7 @@ function background({
   granted = true, result, fetchError, overrides = {}, platform = 'Safari',
   activeTabs = [{ id: 42 }], selections = [{ frameId: 0, result: 'selected text' }],
   captured = { success: true, targetId: 'test-target' }, frameResult = { success: true }, frameError,
-  legacyKey, localKey, beforeLocalSet, noticeState, openNotice = async () => ({ id: 1 })
+  legacyKey, localKey, beforeLocalSet, noticeState, openNotice = async () => {}
 } = {}) {
   const requests = [];
   const permissions = [];
@@ -69,7 +69,8 @@ function background({
   const tabQueries = [];
   const injections = [];
   const registeredMenus = [];
-  const noticeWindows = [];
+  const openedPopups = [];
+  let actionPopup = "popup.html";
   const warnings = [];
   const { apiKey, ...otherSettings } = { ...settings, ...overrides };
   const sync = { ...otherSettings, ...(legacyKey === undefined ? {} : { apiKey: legacyKey }) };
@@ -78,12 +79,13 @@ function background({
     runtime: {
       onInstalled: { addListener(fn) { installListener = fn; } },
       onStartup: { addListener(fn) { startupListener = fn; } },
-      onMessage: { addListener(fn) { listener = fn; } },
-      getURL(pathname) { return `https://extension.test/${pathname}`; }
+      onMessage: { addListener(fn) { listener = fn; } }
     },
-    windows: {
-      async create(options) {
-        noticeWindows.push(plain(options));
+    action: {
+      async getPopup() { return actionPopup; },
+      async setPopup({ popup }) { actionPopup = popup; },
+      async openPopup() {
+        openedPopups.push(actionPopup);
         return openNotice();
       }
     },
@@ -132,7 +134,8 @@ function background({
     tabQueries,
     injections,
     registeredMenus,
-    noticeWindows,
+    openedPopups,
+    get actionPopup() { return actionPopup; },
     warnings,
     sync,
     local,
@@ -348,7 +351,7 @@ test('Chat connection test retains the short request and reply', async () => {
 
 // Native Response supports Safari's text() and Chrome's existing json() paths.
 for (const platform of ['Safari', 'Chrome']) {
-  test(`${platform}: installation opens one separate terms window even if the old inline notice was seen`, async () => {
+  test(`${platform}: installation opens one terms popover and restores the regular toolbar popup`, async () => {
     let reportOpen;
     let finishOpen;
     const opened = new Promise(resolve => { reportOpen = resolve; });
@@ -366,34 +369,30 @@ for (const platform of ['Safari', 'Chrome']) {
     await opened;
     const startup = app.startup();
     assert.equal(app.local.startupTermsNoticeShown, undefined);
-    finishOpen({ id: 1 });
+    finishOpen();
     await startup;
     await app.startup();
     assert.equal(app.local.startupTermsNoticeShown, true);
-    assert.deepEqual(app.noticeWindows, [{
-      url: 'https://extension.test/terms-notice.html',
-      type: 'popup',
-      width: 460,
-      height: 340
-    }]);
+    assert.deepEqual(app.openedPopups, ['terms-notice.html']);
+    assert.equal(app.actionPopup, 'popup.html');
   });
 
-  test(`${platform}: a failed terms window is retried at the next startup`, async () => {
+  test(`${platform}: a failed terms popover restores the regular popup and retries at the next startup`, async () => {
     let attempts = 0;
     const app = background({
       platform,
       async openNotice() {
         if (++attempts === 1) throw new Error('No browser window available');
-        return { id: 1 };
       }
     });
 
     await app.startup();
     assert.equal(app.local.startupTermsNoticeShown, undefined);
     assert.equal(app.warnings.length, 1);
+    assert.equal(app.actionPopup, 'popup.html');
     await app.startup();
     assert.equal(app.local.startupTermsNoticeShown, true);
-    assert.equal(app.noticeWindows.length, 2);
+    assert.deepEqual(app.openedPopups, ['terms-notice.html', 'terms-notice.html']);
   });
 
   test(`${platform}: startup moves the saved API key before the first translation and preserves other synced settings`, async () => {

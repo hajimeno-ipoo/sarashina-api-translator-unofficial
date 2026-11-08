@@ -42,14 +42,14 @@ async function openStartupTermsNotice() {
   const { startupTermsNoticeShown } = await chrome.storage.local.get("startupTermsNoticeShown");
   if (startupTermsNoticeShown) return;
 
-  const noticeWindow = await chrome.windows.create({
-    url: chrome.runtime.getURL("terms-notice.html"),
-    type: "popup",
-    width: 460,
-    height: 340
-  });
-  if (!noticeWindow) throw new Error("注意書きのウィンドウを作成できませんでした。");
-  await chrome.storage.local.set({ startupTermsNoticeShown: true });
+  const normalPopup = await chrome.action.getPopup({});
+  await chrome.action.setPopup({ popup: "terms-notice.html" });
+  try {
+    await chrome.action.openPopup();
+    await chrome.storage.local.set({ startupTermsNoticeShown: true });
+  } finally {
+    await chrome.action.setPopup({ popup: normalPopup });
+  }
 }
 
 function showStartupTermsNoticeOnce() {
