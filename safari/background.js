@@ -80,6 +80,12 @@ ext.runtime.onInstalled.addListener(() => {
   });
 
   ext.contextMenus.create({
+    id: "sarashina-translate-selection-multilingual",
+    title: "Sarashinaで選択部分を翻訳（多言語）",
+    contexts: ["selection"]
+  });
+
+  ext.contextMenus.create({
     id: "sarashina-explain-selection",
     title: "Sarashinaで選択部分を解説",
     contexts: ["selection"]
@@ -100,6 +106,12 @@ ext.runtime.onInstalled.addListener(() => {
   ext.contextMenus.create({
     id: "sarashina-translate-page-ja-to-en",
     title: "Sarashinaでページ全体を翻訳 (日本語 → 英語)",
+    contexts: ["page"]
+  });
+
+  ext.contextMenus.create({
+    id: "sarashina-translate-page-multilingual-to-ja",
+    title: "Sarashinaでページ全体を翻訳（多言語 → 日本語）",
     contexts: ["page"]
   });
 
@@ -163,24 +175,27 @@ ext.contextMenus.onClicked.addListener(async (info, tab) => {
     return;
   }
 
-  if (info.menuItemId === "sarashina-translate-selection" || info.menuItemId === "sarashina-explain-selection") {
+  const isMultilingualSelection = info.menuItemId === "sarashina-translate-selection-multilingual";
+  if (info.menuItemId === "sarashina-translate-selection" || info.menuItemId === "sarashina-explain-selection" || isMultilingualSelection) {
     const selectedText = (info.selectionText || "").trim();
     if (!selectedText) return;
 
     try {
-      await launchSelectionTranslation(tab.id, selectedText, info.frameId || 0,
-        info.menuItemId === "sarashina-explain-selection" ? "explain" : "translate");
+      const initialTask = info.menuItemId === "sarashina-explain-selection" ? "explain" : "translate";
+      const direction = isMultilingualSelection ? "multilingual_to_ja" : undefined;
+      await launchSelectionTranslation(tab.id, selectedText, info.frameId || 0, initialTask, direction);
     } catch (error) {
       console.warn("選択部分の翻訳・解説を起動できませんでした:", error);
     }
   }
 
-  if (info.menuItemId === "sarashina-translate-page-en-to-ja") {
+  const isMultilingualPage = info.menuItemId === "sarashina-translate-page-multilingual-to-ja";
+  if (info.menuItemId === "sarashina-translate-page-en-to-ja" || isMultilingualPage) {
     try {
       await ensureContentScriptLoaded(tab.id);
       ext.tabs.sendMessage(tab.id, {
         action: "start_page_translation",
-        direction: "en_to_ja"
+        direction: isMultilingualPage ? "multilingual_to_ja" : "en_to_ja"
       }, { frameId: 0 });
     } catch (err) {
       console.warn("ページ全体翻訳の起動に失敗:", err);
@@ -200,7 +215,7 @@ ext.contextMenus.onClicked.addListener(async (info, tab) => {
   }
 });
 
-async function launchSelectionTranslation(tabId, sourceText, frameId, initialTask = "translate") {
+async function launchSelectionTranslation(tabId, sourceText, frameId, initialTask = "translate", direction) {
   await ensureContentScriptLoaded(tabId, frameId);
   const captured = await ext.tabs.sendMessage(tabId, {
     action: "capture_selection", sourceText
@@ -209,6 +224,7 @@ async function launchSelectionTranslation(tabId, sourceText, frameId, initialTas
   await ext.tabs.sendMessage(tabId, {
     action: "translate_selection", sourceText,
     ...(initialTask === "explain" ? { initialTask: "explain" } : {}),
+    ...(direction ? { direction } : {}),
     replacementTarget: captured?.success ? { frameId, targetId: captured.targetId } : null,
     replacementError: captured?.success ? "" : captured?.error || "選択範囲を取得できませんでした。文章を選び直してください。"
   }, { frameId: 0 });
@@ -313,7 +329,7 @@ ext.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.action === "translate") {
-    translateText(message.text, message.direction || message.targetLangMode)
+    translateText(message.text, message.direction || message.targetLangMode, message.preserveLineNumbers)
       .then((res) => sendResponse({ success: true, data: res }))
       .catch((err) => sendResponse({ success: false, error: err.message, errorCode: err.code }));
     return true;
@@ -424,9 +440,12 @@ async function callTranslateApi(apiKey, baseUrl, text, sourceLang, targetLang) {
   };
 }
 
-async function callChatCompletionsApi(apiKey, baseUrl, model, text, targetLang) {
+async function callChatCompletionsApi(apiKey, baseUrl, model, text, targetLang, preserveLineNumbers = false) {
   const endpoint = `${baseUrl}/chat/completions`;
   const targetLabel = targetLang === "ja" ? "日本語" : "英語";
+  const lineInstructions = preserveLineNumbers
+    ? "各項目の [番号] と順序を保持し、すでに日本語の項目は原文のまま返してください。\n"
+    : "";
 
   const payload = {
     model: model || "sarashina3-mini",
@@ -437,7 +456,7 @@ async function callChatCompletionsApi(apiKey, baseUrl, model, text, targetLang) 
       },
       {
         role: "user",
-        content: `以下の文章を${targetLabel}に翻訳してください:\n\n${text}`
+        content: `以下の文章を${targetLabel}に翻訳してください:\n${lineInstructions}\n${text}`
       }
     ],
     temperature: 0.3,
@@ -509,7 +528,7 @@ async function requestExplanationCompletion(text, translatedText, systemPrompt, 
   return explanationText.trim();
 }
 
-async function translateText(text, directionParam) {
+async function translateText(text, directionParam, preserveLineNumbers) {
   const settings = await getSettings();
 
   const apiKey = (settings.apiKey || "").trim();
@@ -528,6 +547,10 @@ async function translateText(text, directionParam) {
   let targetLang;
 
   const mode = directionParam || settings.targetLangMode || "auto";
+
+  if (mode === "multilingual_to_ja") {
+    return await callChatCompletionsApi(apiKey, baseUrl, settings.chatModel, text, "ja", preserveLineNumbers);
+  }
 
   if (mode === "en_to_ja" || mode === "ja") {
     sourceLang = "en";

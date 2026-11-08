@@ -86,7 +86,7 @@
         showSelectionModal({ status: "idle", sourceText, direction: "auto" });
         void explainSelection();
       } else {
-        void translateSelection(sourceText);
+        void translateSelection(sourceText, message.direction);
       }
       sendResponse({ success: true });
       return;
@@ -432,6 +432,7 @@
             <option value="auto" ${data.direction === "auto" ? "selected" : ""}>自動判定</option>
             <option value="en_to_ja" ${data.direction === "en_to_ja" ? "selected" : ""}>英語 → 日本語</option>
             <option value="ja_to_en" ${data.direction === "ja_to_en" ? "selected" : ""}>日本語 → 英語</option>
+            ${data.direction === "multilingual_to_ja" ? '<option value="multilingual_to_ja" selected>多言語 → 日本語</option>' : ""}
           </select>
           <button class="sarashina-retranslate-btn" ${controlsDisabled ? "disabled" : ""}>${isError ? "再試行" : isLoading ? "翻訳中…" : data.status === "idle" ? "翻訳" : "再翻訳"}</button>
           <div class="sarashina-result-actions">
@@ -781,7 +782,10 @@
     currentDirection = direction;
     isPageTranslating = true;
 
-    const dirLabel = direction === "en_to_ja" ? "英語 → 日本語" : "日本語 → 英語";
+    const isMultilingual = direction === "multilingual_to_ja";
+    const dirLabel = isMultilingual
+      ? "多言語 → 日本語"
+      : (direction === "en_to_ja" ? "英語 → 日本語" : "日本語 → 英語");
     showPageBar(`ページ構造を解析中 (${dirLabel})...`, "loading");
 
     // アイコンや装飾要素を完全除外した最末端 TextNode のみを安全に収集
@@ -791,7 +795,7 @@
       const msg = direction === "en_to_ja"
         ? "翻訳対象の英語テキストが見つかりませんでした（既に日本語です）。"
         : "翻訳対象の日本語テキストが見つかりませんでした。";
-      showPageBar(msg, "completed");
+      showPageBar(isMultilingual ? "翻訳対象のテキストが見つかりませんでした。" : msg, "completed");
       isPageTranslating = false;
       return;
     }
@@ -834,7 +838,8 @@
         const response = await chrome.runtime.sendMessage({
           action: "translate",
           text: indexedLines,
-          direction: currentDirection
+          direction: currentDirection,
+          ...(isMultilingual ? { preserveLineNumbers: true } : {})
         });
 
         if (response?.success === false && response.errorCode === "API_KEY_REQUIRED") {
@@ -1035,6 +1040,11 @@
             return;
           }
 
+          if (direction === "multilingual_to_ja") {
+            nodes.push(node);
+            return;
+          }
+
           const hasJa = containsJapanese(text);
 
           if (direction === "en_to_ja") {
@@ -1092,6 +1102,7 @@
           <select id="sarashina-bar-dir-select" class="sarashina-bar-select">
             <option value="en_to_ja" ${currentDirection === "en_to_ja" ? "selected" : ""}>英語 → 日本語</option>
             <option value="ja_to_en" ${currentDirection === "ja_to_en" ? "selected" : ""}>日本語 → 英語</option>
+            ${currentDirection === "multilingual_to_ja" ? '<option value="multilingual_to_ja" selected>多言語 → 日本語</option>' : ""}
           </select>
           <button id="sarashina-switch-dir-btn" class="sarashina-bar-btn translate" title="選択した方向で再翻訳">翻訳実行</button>
           ${isPageTranslated ? `
