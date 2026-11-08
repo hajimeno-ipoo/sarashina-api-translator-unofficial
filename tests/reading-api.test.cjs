@@ -27,10 +27,20 @@ function app(platform, { output = valid, status = 200, key = 'test-key', granted
   const permissions = [];
   const menus = [];
   const ext = {
-    runtime: { onInstalled: { addListener(fn) { installed = fn; } }, onMessage: { addListener(fn) { listener = fn; } } },
+    runtime: {
+      onInstalled: { addListener(fn) { installed = fn; } },
+      onStartup: { addListener() {} },
+      onMessage: { addListener(fn) { listener = fn; } }
+    },
     contextMenus: { create(menu) { menus.push(plain(menu)); }, onClicked: { addListener(fn) { clicked = fn; } } },
     commands: { onCommand: { addListener() {} } },
-    storage: { sync: { get(defaults, done) { done({ ...defaults, apiKey: key }); }, set() {} } },
+    storage: {
+      sync: {
+        async get(keys) { return keys && typeof keys === 'object' && !Array.isArray(keys) ? { ...keys } : {}; },
+        async set() {}
+      },
+      local: { async get() { return { apiKey: key, startupTermsNoticeShown: true }; } }
+    },
     permissions: { async contains(value) { permissions.push(plain(value)); return granted; } },
     tabs: { async sendMessage(tabId, message, options) {
       messages.push({ tabId, ...plain(message), options: plain(options) });

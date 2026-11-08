@@ -30,21 +30,62 @@ function response(status, body) {
   };
 }
 
-function background({ granted = true, result, fetchError, overrides = {}, platform = 'Safari', activeTabs = [{ id: 42 }], selections = [{ frameId: 0, result: 'selected text' }], captured = { success: true, targetId: 'test-target' }, frameResult = { success: true }, frameError } = {}) {
+function storageArea(items, beforeSet) {
+  return {
+    async get(keys) {
+      if (keys == null) return { ...items };
+      if (typeof keys === 'string') keys = [keys];
+      if (Array.isArray(keys)) {
+        return Object.fromEntries(keys.filter(key => Object.hasOwn(items, key)).map(key => [key, items[key]]));
+      }
+      return Object.fromEntries(Object.entries(keys).map(([key, fallback]) => [
+        key, Object.hasOwn(items, key) ? items[key] : fallback
+      ]));
+    },
+    async set(values) {
+      await beforeSet?.(values);
+      Object.assign(items, values);
+    },
+    async remove(keys) {
+      for (const key of [keys].flat()) delete items[key];
+    }
+  };
+}
+
+function background({
+  granted = true, result, fetchError, overrides = {}, platform = 'Safari',
+  activeTabs = [{ id: 42 }], selections = [{ frameId: 0, result: 'selected text' }],
+  captured = { success: true, targetId: 'test-target' }, frameResult = { success: true }, frameError,
+  legacyKey, localKey, beforeLocalSet, noticeState, openNotice = async () => ({ id: 1 })
+} = {}) {
   const requests = [];
   const permissions = [];
   const tabMessages = [];
   let listener;
   let installListener;
+  let startupListener;
   let menuListener;
   let commandListener;
   const tabQueries = [];
   const injections = [];
   const registeredMenus = [];
+  const noticeWindows = [];
+  const warnings = [];
+  const { apiKey, ...otherSettings } = { ...settings, ...overrides };
+  const sync = { ...otherSettings, ...(legacyKey === undefined ? {} : { apiKey: legacyKey }) };
+  const local = { ...(localKey === null ? {} : { apiKey: localKey ?? apiKey }), ...noticeState };
   const ext = {
     runtime: {
       onInstalled: { addListener(fn) { installListener = fn; } },
-      onMessage: { addListener(fn) { listener = fn; } }
+      onStartup: { addListener(fn) { startupListener = fn; } },
+      onMessage: { addListener(fn) { listener = fn; } },
+      getURL(pathname) { return `https://extension.test/${pathname}`; }
+    },
+    windows: {
+      async create(options) {
+        noticeWindows.push(plain(options));
+        return openNotice();
+      }
     },
     contextMenus: { create(menu) { registeredMenus.push(plain(menu)); }, onClicked: { addListener(fn) { menuListener = fn; } } },
     commands: { onCommand: { addListener(fn) { commandListener = fn; } } },
@@ -66,14 +107,14 @@ function background({ granted = true, result, fetchError, overrides = {}, platfo
         }
       }
     },
-    storage: { sync: { get(defaults, done) { done({ ...defaults, ...settings, ...overrides }); }, set() {} } },
+    storage: { sync: storageArea(sync), local: storageArea(local, beforeLocalSet) },
     permissions: { async contains(request) { permissions.push(plain(request)); return granted; } }
   };
   const context = vm.createContext({
     browser: ext,
     chrome: ext,
     URL,
-    console,
+    console: { ...console, warn(...args) { warnings.push(args); } },
     setTimeout,
     async fetch(endpoint, options) {
       requests.push({ endpoint, options });
@@ -91,7 +132,12 @@ function background({ granted = true, result, fetchError, overrides = {}, platfo
     tabQueries,
     injections,
     registeredMenus,
+    noticeWindows,
+    warnings,
+    sync,
+    local,
     install() { return installListener(); },
+    startup() { return startupListener(); },
     selectionText(document, window) {
       context.document = document;
       context.window = window;
@@ -112,7 +158,7 @@ function background({ granted = true, result, fetchError, overrides = {}, platfo
   };
 }
 
-function optionsPage(requestPermission) {
+async function optionsPage(requestPermission) {
   const elements = new Map();
   const events = [];
   const sent = [];
@@ -130,8 +176,9 @@ function optionsPage(requestPermission) {
       return elements.get(id);
     }
   };
+  const { apiKey, ...sync } = settings;
   const ext = {
-    storage: { sync: { get(defaults, done) { done({ ...defaults, ...settings }); } } },
+    storage: { sync: storageArea(sync), local: storageArea({ apiKey }) },
     permissions: {
       request(request) {
         events.push('permission');
@@ -141,6 +188,7 @@ function optionsPage(requestPermission) {
     },
     runtime: {
       async sendMessage(message) {
+        if (message.action === 'prepare_api_key_storage') return { success: true };
         events.push('message');
         sent.push(plain(message));
         return { success: true, message: '接続成功' };
@@ -150,7 +198,7 @@ function optionsPage(requestPermission) {
   vm.runInNewContext(fs.readFileSync(path.join(root, 'safari/options.js'), 'utf8'), {
     document, browser: ext, URL, console
   });
-  ready();
+  await ready();
   return { elements, events, sent, click: () => elements.get('test-btn').handlers.click() };
 }
 
@@ -188,7 +236,7 @@ test('Safari translation nuance checks API host permission before fetching', asy
 
 test('connection button requests permission first and waits for approval before sending', async () => {
   let approve;
-  const page = optionsPage(() => new Promise((resolve) => { approve = resolve; }));
+  const page = await optionsPage(() => new Promise((resolve) => { approve = resolve; }));
   const pending = page.click();
   assert.deepEqual(page.events, ['permission']);
   await Promise.resolve();
@@ -204,7 +252,7 @@ test('connection button requests permission first and waits for approval before 
 });
 
 test('connection button permission refusal sends no API message and restores the button', async () => {
-  const page = optionsPage(async () => false);
+  const page = await optionsPage(async () => false);
   await page.click();
   assert.deepEqual(page.events, ['permission']);
   assert.equal(page.sent.length, 0);
@@ -300,6 +348,135 @@ test('Chat connection test retains the short request and reply', async () => {
 
 // Native Response supports Safari's text() and Chrome's existing json() paths.
 for (const platform of ['Safari', 'Chrome']) {
+  test(`${platform}: installation opens one separate terms window even if the old inline notice was seen`, async () => {
+    let reportOpen;
+    let finishOpen;
+    const opened = new Promise(resolve => { reportOpen = resolve; });
+    const opening = new Promise(resolve => { finishOpen = resolve; });
+    const app = background({
+      platform,
+      noticeState: { termsNoticeShown: true },
+      openNotice() {
+        reportOpen();
+        return opening;
+      }
+    });
+
+    app.install();
+    await opened;
+    const startup = app.startup();
+    assert.equal(app.local.startupTermsNoticeShown, undefined);
+    finishOpen({ id: 1 });
+    await startup;
+    await app.startup();
+    assert.equal(app.local.startupTermsNoticeShown, true);
+    assert.deepEqual(app.noticeWindows, [{
+      url: 'https://extension.test/terms-notice.html',
+      type: 'popup',
+      width: 460,
+      height: 340
+    }]);
+  });
+
+  test(`${platform}: a failed terms window is retried at the next startup`, async () => {
+    let attempts = 0;
+    const app = background({
+      platform,
+      async openNotice() {
+        if (++attempts === 1) throw new Error('No browser window available');
+        return { id: 1 };
+      }
+    });
+
+    await app.startup();
+    assert.equal(app.local.startupTermsNoticeShown, undefined);
+    assert.equal(app.warnings.length, 1);
+    await app.startup();
+    assert.equal(app.local.startupTermsNoticeShown, true);
+    assert.equal(app.noticeWindows.length, 2);
+  });
+
+  test(`${platform}: startup moves the saved API key before the first translation and preserves other synced settings`, async () => {
+    let startWrite;
+    let finishWrite;
+    const started = new Promise(resolve => { startWrite = resolve; });
+    const write = new Promise(resolve => { finishWrite = resolve; });
+    const app = background({
+      platform,
+      localKey: null,
+      noticeState: { startupTermsNoticeShown: true },
+      legacyKey: 'legacy-key',
+      overrides: { apiBaseUrl: 'https://example.test/v1', pageDefaultDirection: 'ja_to_en' },
+      result: new Response('{"translated_text":"こんにちは"}'),
+      beforeLocalSet() {
+        startWrite();
+        return write;
+      }
+    });
+    const originalSync = { ...app.sync };
+    app.startup();
+    await started;
+    const preparing = app.message({ action: 'prepare_api_key_storage' });
+    const translating = app.message({ action: 'translate', text: 'Hello', direction: 'en_to_ja' });
+    try {
+      await new Promise(resolve => setImmediate(resolve));
+      assert.deepEqual(app.local, { startupTermsNoticeShown: true });
+      assert.deepEqual(app.sync, originalSync);
+      assert.equal(app.requests.length, 0);
+    } finally {
+      finishWrite();
+    }
+    assert.deepEqual(plain(await preparing), { success: true });
+    assert.equal((await translating).success, true);
+    assert.deepEqual(app.local, { apiKey: 'legacy-key', startupTermsNoticeShown: true });
+    delete originalSync.apiKey;
+    assert.deepEqual(app.sync, originalSync);
+    assert.equal(app.requests[0].endpoint, 'https://example.test/v1/translate');
+    assert.equal(app.requests[0].options.headers.Authorization, 'Bearer legacy-key');
+  });
+
+  test(`${platform}: migration keeps the local API key even when it was cleared`, async () => {
+    for (const localKey of ['local-key', '']) {
+      const app = background({
+        platform,
+        localKey,
+        legacyKey: 'legacy-key',
+        result: new Response('{"translated_text":"こんにちは"}')
+      });
+      const reply = await app.message({ action: 'translate', text: 'Hello', direction: 'en_to_ja' });
+      assert.deepEqual(app.local, { apiKey: localKey });
+      assert.equal(Object.hasOwn(app.sync, 'apiKey'), false);
+      assert.equal(reply.success, Boolean(localKey));
+      if (localKey) {
+        assert.equal(app.requests[0].options.headers.Authorization, 'Bearer local-key');
+      } else {
+        assert.equal(reply.errorCode, 'API_KEY_REQUIRED');
+        assert.equal(app.requests.length, 0);
+      }
+    }
+  });
+
+  test(`${platform}: a failed local write leaves the sync key available for the next migration attempt`, async () => {
+    let fail = true;
+    const app = background({
+      platform,
+      localKey: null,
+      legacyKey: 'legacy-key',
+      beforeLocalSet() {
+        if (fail) throw new Error('storage unavailable');
+      }
+    });
+    const prepare = () => app.message({ action: 'prepare_api_key_storage' });
+    assert.equal((await prepare()).success, false);
+    assert.deepEqual(app.local, {});
+    assert.equal(app.sync.apiKey, 'legacy-key');
+
+    fail = false;
+    assert.equal((await prepare()).success, true);
+    assert.deepEqual(app.local, { apiKey: 'legacy-key' });
+    assert.equal(Object.hasOwn(app.sync, 'apiKey'), false);
+  });
+
   test(`${platform}: translation nuance uses mini for either mode and quotes the exact original and translation`, async () => {
     for (const apiMode of ['translate', 'chat']) {
       const result = response(200, JSON.stringify({ choices: [{ message: { content: '  「やっておいて」は、依頼としてややくだけた表現です。  ' } }] }));

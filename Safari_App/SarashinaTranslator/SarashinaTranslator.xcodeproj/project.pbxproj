@@ -29,6 +29,7 @@
 		1894B3C0307E1BD700C0BBF6 /* content.js in Resources */ = {isa = PBXBuildFile; fileRef = 1894B3B6307E1BD700C0BBF6 /* content.js */; };
 		1894B3C2307E1BD700C0BBF6 /* selection-replacement.js in Resources */ = {isa = PBXBuildFile; fileRef = 1894B3C1307E1BD700C0BBF6 /* selection-replacement.js */; };
 		1894B3C4307E1BD700C0BBF6 /* reading.js in Resources */ = {isa = PBXBuildFile; fileRef = 1894B3C3307E1BD700C0BBF6 /* reading.js */; };
+		1894B3C6307E1BD700C0BBF6 /* terms-notice.html in Resources */ = {isa = PBXBuildFile; fileRef = 1894B3C5307E1BD700C0BBF6 /* terms-notice.html */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -79,6 +80,7 @@
 		1894B3B6307E1BD700C0BBF6 /* content.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; name = content.js; path = ../../../safari/content.js; sourceTree = "<group>"; };
 		1894B3C1307E1BD700C0BBF6 /* selection-replacement.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; name = "selection-replacement.js"; path = "../../../safari/selection-replacement.js"; sourceTree = "<group>"; };
 		1894B3C3307E1BD700C0BBF6 /* reading.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; name = "reading.js"; path = "../../../safari/reading.js"; sourceTree = "<group>"; };
+		1894B3C5307E1BD700C0BBF6 /* terms-notice.html */ = {isa = PBXFileReference; lastKnownFileType = text.html; name = "terms-notice.html"; path = "../../../safari/terms-notice.html"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -162,6 +164,7 @@
 				1894B3B6307E1BD700C0BBF6 /* content.js */,
 				1894B3C1307E1BD700C0BBF6 /* selection-replacement.js */,
 				1894B3C3307E1BD700C0BBF6 /* reading.js */,
+				1894B3C5307E1BD700C0BBF6 /* terms-notice.html */,
 			);
 			name = Resources;
 			path = "SarashinaTranslator Extension";
@@ -264,6 +267,7 @@
 				1894B3C0307E1BD700C0BBF6 /* content.js in Resources */,
 				1894B3C2307E1BD700C0BBF6 /* selection-replacement.js in Resources */,
 				1894B3C4307E1BD700C0BBF6 /* reading.js in Resources */,
+				1894B3C6307E1BD700C0BBF6 /* terms-notice.html in Resources */,
 				1894B3BE307E1BD700C0BBF6 /* manifest.json in Resources */,
 				1894B3B8307E1BD700C0BBF6 /* content.css in Resources */,
 				1894B3BD307E1BD700C0BBF6 /* icons in Resources */,

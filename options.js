@@ -1,6 +1,6 @@
 // options.js - Sarashina 翻訳 設定画面制御
 
-document.addEventListener("DOMContentLoaded", () => {
+document.addEventListener("DOMContentLoaded", async () => {
   const form = document.getElementById("settings-form");
   const apiKeyEl = document.getElementById("api-key");
   const toggleVisibilityBtn = document.getElementById("toggle-key-visibility");
@@ -14,7 +14,6 @@ document.addEventListener("DOMContentLoaded", () => {
   const statusBox = document.getElementById("status-box");
 
   const DEFAULT_SETTINGS = {
-    apiKey: "",
     apiBaseUrl: "https://api.sarashina.ai/v1",
     apiMode: "translate",
     chatModel: "sarashina3-mini",
@@ -31,16 +30,6 @@ document.addEventListener("DOMContentLoaded", () => {
 
   apiModeEl.addEventListener("change", updateModeVisibility);
 
-  // 保存されている設定を読み込み
-  chrome.storage.sync.get(DEFAULT_SETTINGS, (items) => {
-    apiKeyEl.value = items.apiKey || "";
-    pageDefaultDirEl.value = items.pageDefaultDirection || DEFAULT_SETTINGS.pageDefaultDirection;
-    apiBaseUrlEl.value = items.apiBaseUrl || DEFAULT_SETTINGS.apiBaseUrl;
-    apiModeEl.value = items.apiMode || DEFAULT_SETTINGS.apiMode;
-    chatModelEl.value = items.chatModel || DEFAULT_SETTINGS.chatModel;
-    updateModeVisibility();
-  });
-
   // APIキーの表示・非表示切り替え
   toggleVisibilityBtn.addEventListener("click", () => {
     if (apiKeyEl.type === "password") {
@@ -53,11 +42,12 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   // 設定保存
-  form.addEventListener("submit", (e) => {
+  form.addEventListener("submit", async (e) => {
     e.preventDefault();
+    if (saveBtn.disabled) return;
 
+    const apiKey = apiKeyEl.value.trim();
     const newSettings = {
-      apiKey: apiKeyEl.value.trim(),
       apiBaseUrl: apiBaseUrlEl.value.trim() || DEFAULT_SETTINGS.apiBaseUrl,
       apiMode: apiModeEl.value,
       chatModel: chatModelEl.value,
@@ -67,11 +57,16 @@ document.addEventListener("DOMContentLoaded", () => {
     saveBtn.disabled = true;
     saveBtn.textContent = "保存中...";
 
-    chrome.storage.sync.set(newSettings, () => {
+    try {
+      await chrome.storage.sync.set(newSettings);
+      await chrome.storage.local.set({ apiKey });
+      showStatus("設定が正常に保存されました！", "success");
+    } catch {
+      showStatus("設定を保存できませんでした。", "error");
+    } finally {
       saveBtn.disabled = false;
       saveBtn.textContent = "設定を保存";
-      showStatus("設定が正常に保存されました！", "success");
-    });
+    }
   });
 
   // 接続テスト
@@ -115,5 +110,25 @@ document.addEventListener("DOMContentLoaded", () => {
     statusBox.textContent = message;
     statusBox.className = `status-msg ${type}`;
     statusBox.style.display = "block";
+  }
+
+  saveBtn.disabled = true;
+  try {
+    const response = await chrome.runtime.sendMessage({ action: "prepare_api_key_storage" });
+    if (!response?.success) throw new Error(response?.error);
+
+    const [items, { apiKey = "" }] = await Promise.all([
+      chrome.storage.sync.get(DEFAULT_SETTINGS),
+      chrome.storage.local.get("apiKey")
+    ]);
+    apiKeyEl.value = apiKey;
+    pageDefaultDirEl.value = items.pageDefaultDirection || DEFAULT_SETTINGS.pageDefaultDirection;
+    apiBaseUrlEl.value = items.apiBaseUrl || DEFAULT_SETTINGS.apiBaseUrl;
+    apiModeEl.value = items.apiMode || DEFAULT_SETTINGS.apiMode;
+    chatModelEl.value = items.chatModel || DEFAULT_SETTINGS.chatModel;
+    updateModeVisibility();
+    saveBtn.disabled = false;
+  } catch {
+    showStatus("設定を読み込めませんでした。設定画面を開き直してください。", "error");
   }
 });

@@ -840,8 +840,10 @@ for (const engine of engines) {
         const chrome = {
           runtime: {
             onInstalled: { addListener() {} },
+            onStartup: { addListener() {} },
             onMessage: { addListener(listener) { backgroundListener = listener; } }
           },
+          storage: { sync: { async get() { return {}; } } },
           contextMenus: { onClicked: { addListener() {} } },
           commands: { onCommand: { addListener() {} } },
           tabs: { sendMessage: async (tabId, message, options) => {
@@ -863,7 +865,10 @@ for (const engine of engines) {
           window.closedByPopup = 0;
           window.close = () => { window.closedByPopup++; };
           window.chrome = {
-            storage: { sync: { get: (_keys, callback) => callback({ apiKey: 'mock-key' }) } },
+            storage: {
+              sync: { get: async () => ({}) },
+              local: { get: async () => ({ apiKey: 'mock-key', termsNoticeShown: true }) }
+            },
             tabs: { query: async () => [{ id: 42, url: 'https://fixture.example/' }] },
             runtime: { sendMessage: (message) => window.bridgeToBackground(message) }
           };

@@ -16,18 +16,6 @@ document.addEventListener("DOMContentLoaded", async () => {
   const openSettingsIcon = document.getElementById("open-settings-icon");
   const openSettingsLink = document.getElementById("open-settings-link");
 
-  ext.storage.sync.get(["apiKey", "pageDefaultDirection"], (items) => {
-    if (!items.apiKey || items.apiKey.trim() === "") {
-      apiKeyWarningEl.style.display = "block";
-    } else {
-      apiKeyWarningEl.style.display = "none";
-    }
-
-    if (items.pageDefaultDirection && pageTranslateDirEl) {
-      pageTranslateDirEl.value = items.pageDefaultDirection;
-    }
-  });
-
   function openOptions() {
     if (ext.runtime.openOptionsPage) {
       ext.runtime.openOptionsPage();
@@ -176,5 +164,19 @@ document.addEventListener("DOMContentLoaded", async () => {
   function clearError() {
     errorBoxEl.textContent = "";
     errorBoxEl.style.display = "none";
+  }
+
+  try {
+    const response = await ext.runtime.sendMessage({ action: "prepare_api_key_storage" });
+    if (!response?.success) throw new Error(response?.error);
+
+    const [{ pageDefaultDirection }, { apiKey }] = await Promise.all([
+      ext.storage.sync.get("pageDefaultDirection"),
+      ext.storage.local.get("apiKey")
+    ]);
+    apiKeyWarningEl.style.display = apiKey?.trim() ? "none" : "block";
+    if (pageDefaultDirection) pageTranslateDirEl.value = pageDefaultDirection;
+  } catch {
+    showError("設定を読み込めませんでした。ポップアップを開き直してください。");
   }
 });

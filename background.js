@@ -1,7 +1,6 @@
 // background.js - Sarashina 翻訳 サービスワーカー（双方向翻訳・安全フィルタリング対応）
 
 const DEFAULT_SETTINGS = {
-  apiKey: "",
   apiBaseUrl: "https://api.sarashina.ai/v1",
   apiMode: "translate", // "translate" (公式専用API: sarashina3-translate) または "chat" (Chat Completions)
   chatModel: "sarashina3-mini",
@@ -9,8 +8,69 @@ const DEFAULT_SETTINGS = {
   targetLangMode: "auto"
 };
 
+let apiKeyMigration;
+
+async function migrateApiKey() {
+  const { apiKey } = await chrome.storage.sync.get("apiKey");
+  if (apiKey === undefined) return;
+
+  const local = await chrome.storage.local.get("apiKey");
+  // 保存済みのローカル値（キーを消した場合の空文字も含む）を優先する。
+  if (local.apiKey === undefined) {
+    await chrome.storage.local.set({ apiKey });
+  }
+  await chrome.storage.sync.remove("apiKey");
+}
+
+function prepareApiKeyStorage() {
+  apiKeyMigration ??= migrateApiKey().catch((error) => {
+    apiKeyMigration = undefined;
+    throw error;
+  });
+  return apiKeyMigration;
+}
+
+function startApiKeyMigration() {
+  return prepareApiKeyStorage().catch(() => {
+    console.warn("APIキーの保存先を移行できませんでした。");
+  });
+}
+
+let startupTermsNotice;
+
+async function openStartupTermsNotice() {
+  const { startupTermsNoticeShown } = await chrome.storage.local.get("startupTermsNoticeShown");
+  if (startupTermsNoticeShown) return;
+
+  const noticeWindow = await chrome.windows.create({
+    url: chrome.runtime.getURL("terms-notice.html"),
+    type: "popup",
+    width: 460,
+    height: 340
+  });
+  if (!noticeWindow) throw new Error("注意書きのウィンドウを作成できませんでした。");
+  await chrome.storage.local.set({ startupTermsNoticeShown: true });
+}
+
+function showStartupTermsNoticeOnce() {
+  startupTermsNotice ??= openStartupTermsNotice().catch((error) => {
+    console.warn("起動時の注意書きを表示できませんでした。", error);
+  }).finally(() => {
+    startupTermsNotice = undefined;
+  });
+  return startupTermsNotice;
+}
+
+chrome.runtime.onStartup.addListener(() => Promise.all([
+  startApiKeyMigration(),
+  showStartupTermsNoticeOnce()
+]));
+
 // 拡張機能インストール時にコンテキストメニューを登録
 chrome.runtime.onInstalled.addListener(() => {
+  void startApiKeyMigration();
+  void showStartupTermsNoticeOnce();
+
   chrome.contextMenus.create({
     id: "sarashina-translate-selection",
     title: "Sarashinaで選択部分を翻訳",
@@ -41,7 +101,7 @@ chrome.runtime.onInstalled.addListener(() => {
     contexts: ["page"]
   });
 
-  chrome.storage.sync.get(Object.keys(DEFAULT_SETTINGS), (items) => {
+  chrome.storage.sync.get(Object.keys(DEFAULT_SETTINGS)).then((items) => {
     const toSet = {};
     for (const key of Object.keys(DEFAULT_SETTINGS)) {
       if (items[key] === undefined) {
@@ -49,9 +109,9 @@ chrome.runtime.onInstalled.addListener(() => {
       }
     }
     if (Object.keys(toSet).length > 0) {
-      chrome.storage.sync.set(toSet);
+      return chrome.storage.sync.set(toSet);
     }
-  });
+  }).catch(() => console.warn("既定の設定を保存できませんでした。"));
 });
 
 // 対象タブにコンテンツスクリプトが読み込まれているか確認し、未読み込みなら動的に注入
@@ -189,6 +249,13 @@ chrome.commands.onCommand.addListener(async (command) => {
 
 // メッセージハンドラ
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.action === "prepare_api_key_storage") {
+    prepareApiKeyStorage()
+      .then(() => sendResponse({ success: true }))
+      .catch(() => sendResponse({ success: false, error: "APIキーの保存先を準備できませんでした。" }));
+    return true;
+  }
+
   const selectionActions = {
     replace_selection: "apply_selection_translation",
     restore_selection: "restore_selection_translation",
@@ -273,12 +340,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 
 // 設定取得ヘルパー
-function getSettings() {
-  return new Promise((resolve) => {
-    chrome.storage.sync.get(DEFAULT_SETTINGS, (items) => {
-      resolve(items);
-    });
-  });
+async function getSettings() {
+  await prepareApiKeyStorage();
+  const [settings, { apiKey = "" }] = await Promise.all([
+    chrome.storage.sync.get(DEFAULT_SETTINGS),
+    chrome.storage.local.get("apiKey")
+  ]);
+  return { ...settings, apiKey };
 }
 
 function isJapaneseText(text) {

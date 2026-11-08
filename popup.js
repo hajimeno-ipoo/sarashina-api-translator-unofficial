@@ -14,19 +14,6 @@ document.addEventListener("DOMContentLoaded", async () => {
   const openSettingsIcon = document.getElementById("open-settings-icon");
   const openSettingsLink = document.getElementById("open-settings-link");
 
-  // 設定確認
-  chrome.storage.sync.get(["apiKey", "pageDefaultDirection"], (items) => {
-    if (!items.apiKey || items.apiKey.trim() === "") {
-      apiKeyWarningEl.style.display = "block";
-    } else {
-      apiKeyWarningEl.style.display = "none";
-    }
-
-    if (items.pageDefaultDirection && pageTranslateDirEl) {
-      pageTranslateDirEl.value = items.pageDefaultDirection;
-    }
-  });
-
   // 設定画面を開く
   function openOptions() {
     if (chrome.runtime.openOptionsPage) {
@@ -181,5 +168,19 @@ document.addEventListener("DOMContentLoaded", async () => {
   function clearError() {
     errorBoxEl.textContent = "";
     errorBoxEl.style.display = "none";
+  }
+
+  try {
+    const response = await chrome.runtime.sendMessage({ action: "prepare_api_key_storage" });
+    if (!response?.success) throw new Error(response?.error);
+
+    const [{ pageDefaultDirection }, { apiKey }] = await Promise.all([
+      chrome.storage.sync.get("pageDefaultDirection"),
+      chrome.storage.local.get("apiKey")
+    ]);
+    apiKeyWarningEl.style.display = apiKey?.trim() ? "none" : "block";
+    if (pageDefaultDirection) pageTranslateDirEl.value = pageDefaultDirection;
+  } catch {
+    showError("設定を読み込めませんでした。ポップアップを開き直してください。");
   }
 });
