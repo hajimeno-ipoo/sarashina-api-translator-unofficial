@@ -24,6 +24,14 @@ Sarashina APIを使って、Webページの文章を日本語・英語に翻訳�
 - ショートカットで選択翻訳を起動。Macは `Option + Shift + Y`、その他は `Alt + Shift + Y`。
 - アクセスが許可されたiframe内の選択にも対応。
 
+### 選択した文章を日本語で読み上げる
+
+文章を選択し、右クリックの「Sarashinaで選択部分を読上げ」を選ぶと、日本語に翻訳して音声を再生します。英語と判定した文章には翻訳専用のTranslate APIを使い、ほかの言語や言語を判定できなかった文章には多言語翻訳を使います。翻訳結果の枠は表示しません。
+
+音声の準備中はページ上部の中央に動く球と「読み上げを準備中」を表示し、帯の周囲を Border Beam の光が回ります。準備を取り消すには、帯の右上にある「×」を押します。音声が流れ始めると同じ位置に「読み上げ中」と表示し、帯の下端の光が声の強さに合わせて動きます。最後の音声が終わるか、処理に失敗すると表示が消えます。
+
+選択した文章を翻訳APIに送り、返った日本語訳をSarashinaのTTS APIに送ります。長い訳文は分けて順番に読み上げます。音声合成に対応していない絵文字などは読み上げから省かれます。
+
 ### 選択部分を訳文に置き換える
 
 訳文を確認して「原文を訳文に置き換える」を押すと、選択部分だけを差し替えます。ページ本文に加え、一行入力、複数行入力、`contentEditable` の編集欄に対応しています。
@@ -151,6 +159,9 @@ sarashina-api-translator-unofficial/
 ├── content.js                 # 選択カード・ページ翻訳
 ├── selection-replacement.js   # 選択範囲の保存・置換・復元
 ├── reading.js                 # 読み表示・ページ内キャッシュ・本文変更の監視
+├── speech-player.html / speech-player.js # Chrome版の読み上げ再生
+├── speech-status/             # 読み上げのアニメーションのソースとビルド設定
+├── speech-status.bundle.js    # 拡張機能に同梱する表示用スクリプト
 ├── popup.html / popup.js      # ポップアップ
 ├── terms-notice.html          # 初回起動時の注意書き
 ├── options.html / options.js  # API設定
@@ -160,7 +171,12 @@ sarashina-api-translator-unofficial/
 └── tests/                     # API処理の回帰テスト・読み表示のDOMテスト
 ```
 
-拡張機能自体にnpmの依存パッケージやビルド処理はありません。以下のコマンドはリポジトリのルートで実行します。
+表示用スクリプトはChrome版とSafari版に同梱しているため、拡張機能の導入時にnpmは不要です。読み上げのアニメーションを変更した場合は、リポジトリのルートで次のコマンドを実行すると両版の `speech-status.bundle.js` が更新されます。
+
+```sh
+npm ci --prefix speech-status
+npm run build --prefix speech-status
+```
 
 ### API処理のテスト
 

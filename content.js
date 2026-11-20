@@ -6,6 +6,7 @@
 
   let selectionRequestId = 0;
   let selectionState = null;
+  let selectionContainer;
   let selectionExpanded = false;
   let explanationRequestId = 0;
   let selectionExplanation = { status: "idle", text: "", error: "" };
@@ -41,12 +42,35 @@
 
   globalThis.SarashinaReading?.configure({ skipElement: isIconOrDecorativeElement });
 
+  async function sendOptionalMessage(message) {
+    try {
+      if (chrome.runtime?.id) await chrome.runtime.sendMessage(message);
+    } catch {
+      // 拡張機能の再読み込み後は、古いページのリスナーから送信できない。
+    }
+  }
+
   // ==========================================
   // メッセージリスナー
   // ==========================================
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message.action === "ping") {
       sendResponse({ pong: true });
+      return;
+    }
+
+    if (message.action === "selection_speech_status") {
+      const status = globalThis.SarashinaSpeechStatus;
+      if (message.state === "preparing") {
+        const { requestId } = message;
+        status?.update(requestId, "preparing", () => {
+          void sendOptionalMessage({ action: "abort_selection_speech", requestId });
+        });
+      } else if (message.state) {
+        status?.update(message.requestId, message.state);
+      }
+      if (typeof message.level === "number") status?.setLevel(message.requestId, message.level);
+      sendResponse({ success: true });
       return;
     }
 
@@ -138,7 +162,7 @@
     selectionExplanation = { status: "idle", text: "", error: "" };
     ++nuanceRequestId;
     selectionNuance = { status: "idle", text: "", error: "" };
-    showSelectionModal({ status: "loading", sourceText: text, direction });
+    if (!showSelectionModal({ status: "loading", sourceText: text, direction })) return;
     try {
       const response = await chrome.runtime.sendMessage({ action: "translate", text, direction });
       if (requestId !== selectionRequestId) return;
@@ -166,7 +190,7 @@
     const text = selectionState.sourceText;
     const translatedText = selectionState.status === "success" ? selectionState.translatedText : undefined;
     selectionExplanation = { status: "loading", text: "", error: "" };
-    showSelectionModal(selectionState);
+    if (!showSelectionModal(selectionState)) return;
     try {
       const response = await chrome.runtime.sendMessage({
         action: "explain", text, ...(translatedText ? { translatedText } : {})
@@ -192,7 +216,7 @@
     const requestId = ++nuanceRequestId;
     const { sourceText: text, translatedText } = selectionState;
     selectionNuance = { status: "loading", text: "", error: "" };
-    showSelectionModal(selectionState);
+    if (!showSelectionModal(selectionState)) return;
     try {
       const response = await chrome.runtime.sendMessage({
         action: "explain_translation_nuance", text, translatedText
@@ -214,9 +238,9 @@
   function releaseSelectionTarget() {
     if (selectionReplacement.target) {
       // 保持したノード参照だけを解放し、置き換えた表示はそのまま残す。
-      void chrome.runtime.sendMessage({
+      void sendOptionalMessage({
         action: "release_selection", target: selectionReplacement.target
-      }).catch(() => {});
+      });
     }
   }
 
@@ -227,7 +251,7 @@
     const translatedText = selectionState.translatedText;
     state.busy = true;
     state.message = "";
-    showSelectionModal(selectionState);
+    if (!showSelectionModal(selectionState)) return;
     try {
       const response = await chrome.runtime.sendMessage({
         action: restore ? "restore_selection" : "replace_selection",
@@ -252,19 +276,24 @@
   }
 
   function showSelectionModal(data) {
+    if (!chrome.runtime?.id) {
+      removeSelectionModal();
+      return false;
+    }
+
     selectionState = data;
-    let container = document.getElementById(POPUP_CONTAINER_ID);
-    const shouldFocus = !container || document.activeElement === container;
-    if (!container) {
-      container = document.createElement("div");
-      container.id = POPUP_CONTAINER_ID;
-      document.body.appendChild(container);
+    const shouldFocus = !selectionContainer?.isConnected || document.activeElement === selectionContainer;
+    if (!selectionContainer?.isConnected) {
+      document.getElementById(POPUP_CONTAINER_ID)?.remove();
+      selectionContainer = document.createElement("div");
+      selectionContainer.id = POPUP_CONTAINER_ID;
+      document.body.appendChild(selectionContainer);
       document.addEventListener("keydown", onSelectionKeydown);
     }
 
-    let shadow = container.shadowRoot;
+    let shadow = selectionContainer.shadowRoot;
     if (!shadow) {
-      shadow = container.attachShadow({ mode: "open" });
+      shadow = selectionContainer.attachShadow({ mode: "open" });
       const style = document.createElement("style");
       style.textContent = getSelectionModalStyles();
       shadow.appendChild(style);
@@ -324,6 +353,7 @@
         }
       };
     }
+    return true;
   }
 
   function removeSelectionModal() {
@@ -337,8 +367,8 @@
     selectionState = null;
     selectionExpanded = false;
     document.removeEventListener("keydown", onSelectionKeydown);
-    const container = document.getElementById(POPUP_CONTAINER_ID);
-    if (container) container.remove();
+    selectionContainer?.remove();
+    selectionContainer = undefined;
   }
 
   function escapeHtml(str) {

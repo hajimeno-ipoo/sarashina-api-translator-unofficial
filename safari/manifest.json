@@ -51,6 +51,7 @@
       "js": [
         "selection-replacement.js",
         "reading.js",
+        "speech-status.bundle.js",
         "content.js"
       ],
       "css": [

@@ -56,11 +56,16 @@ function background({
   granted = true, result, fetchError, overrides = {}, platform = 'Safari',
   activeTabs = [{ id: 42 }], selections = [{ frameId: 0, result: 'selected text' }],
   captured = { success: true, targetId: 'test-target' }, frameResult = { success: true }, frameError,
-  legacyKey, localKey, beforeLocalSet, noticeState, openNotice = async () => {}
+  legacyKey, localKey, beforeLocalSet, noticeState, openNotice = async () => {}, detectedLanguage,
+  contentScriptLoaded = true
 } = {}) {
   const requests = [];
   const permissions = [];
   const tabMessages = [];
+  const extensionMessages = [];
+  const offscreenDocuments = [];
+  const speechWaits = [];
+  let speechClock = 0;
   let listener;
   let installListener;
   let startupListener;
@@ -68,6 +73,7 @@ function background({
   let commandListener;
   const tabQueries = [];
   const injections = [];
+  const cssInjections = [];
   const registeredMenus = [];
   const openedPopups = [];
   let actionPopup = "popup.html";
@@ -79,8 +85,16 @@ function background({
     runtime: {
       onInstalled: { addListener(fn) { installListener = fn; } },
       onStartup: { addListener(fn) { startupListener = fn; } },
-      onMessage: { addListener(fn) { listener = fn; } }
+      onMessage: { addListener(fn) { listener = fn; } },
+      getURL(file) { return `chrome-extension://test/${file}`; },
+      async getContexts() { return offscreenDocuments; },
+      async sendMessage(message) {
+        extensionMessages.push(plain(message));
+        return { success: true };
+      }
     },
+    i18n: { async detectLanguage() { return { languages: detectedLanguage ? [{ language: detectedLanguage }] : [] }; } },
+    offscreen: { async createDocument(options) { offscreenDocuments.push(plain(options)); } },
     action: {
       async getPopup() { return actionPopup; },
       async setPopup({ popup }) { actionPopup = popup; },
@@ -92,8 +106,10 @@ function background({
     contextMenus: { create(menu) { registeredMenus.push(plain(menu)); }, onClicked: { addListener(fn) { menuListener = fn; } } },
     commands: { onCommand: { addListener(fn) { commandListener = fn; } } },
     scripting: {
+      async insertCSS(injection) { cssInjections.push(plain(injection)); },
       async executeScript(injection) {
         injections.push(injection);
+        if (injection.files?.includes('content.js')) contentScriptLoaded = true;
         return selections;
       }
     },
@@ -101,7 +117,13 @@ function background({
       async query(query) { tabQueries.push(plain(query)); return activeTabs; },
       async sendMessage(tabId, message, options) {
         tabMessages.push({ tabId, message: plain(message), options: options && plain(options) });
-        if (message.action === 'ping') return { pong: true };
+        if (message.action === 'ping' || message.action === 'selection_speech_status') {
+          if (!contentScriptLoaded) throw new Error('Receiving end does not exist.');
+          return message.action === 'ping' ? { pong: true } : { success: true };
+        }
+        if (['prepare_selection_speech', 'play_selection_speech', 'cancel_selection_speech'].includes(message.action)) {
+          return { success: true };
+        }
         if (message.action === 'capture_selection') return captured;
         if (['apply_selection_translation', 'restore_selection_translation', 'release_selection_target'].includes(message.action)) {
           if (frameError) throw frameError;
@@ -115,14 +137,22 @@ function background({
   const context = vm.createContext({
     browser: ext,
     chrome: ext,
-    URL,
+    URL, crypto, btoa, AbortController,
+    importScripts(file) {
+      vm.runInContext(fs.readFileSync(path.join(root, 'safari', file), 'utf8'), context);
+    },
     console: { ...console, warn(...args) { warnings.push(args); } },
-    setTimeout,
+    Date: detectedLanguage ? { now: () => speechClock } : Date,
+    setTimeout: detectedLanguage ? (callback, delay) => {
+      speechWaits.push(delay);
+      speechClock += delay;
+      callback();
+    } : setTimeout,
     async fetch(endpoint, options) {
       requests.push({ endpoint, options });
       if (fetchError) throw fetchError;
       assert.ok(result, 'test must provide a mocked API response');
-      return result;
+      return typeof result === 'function' ? result(endpoint, options) : result;
     }
   });
   const sourcePath = platform === 'Chrome' ? 'background.js' : 'safari/background.js';
@@ -131,8 +161,12 @@ function background({
     requests,
     permissions,
     tabMessages,
+    extensionMessages,
+    offscreenDocuments,
+    speechWaits,
     tabQueries,
     injections,
+    cssInjections,
     registeredMenus,
     openedPopups,
     get actionPopup() { return actionPopup; },
@@ -151,6 +185,9 @@ function background({
     select(text, tabId = 42) {
       return menuListener({ menuItemId: 'sarashina-translate-selection', selectionText: text }, { id: tabId });
     },
+    speechPlayback(requestId, status) {
+      listener({ action: 'selection_speech_playback', requestId, ...status }, { url: ext.runtime.getURL('speech-player.html') });
+    },
     message(message, sender = {}) {
       return new Promise((resolve) => {
         let responded = false;
@@ -160,6 +197,182 @@ function background({
     }
   };
 }
+
+for (const platform of ['Chrome', 'Safari']) {
+  for (const [language, sourceText, translationPath] of [
+    ['en', 'Thank you for checking this extension.', '/translate'],
+    ['fr', 'Bonjour tout le monde, comment allez-vous ?', '/chat/completions']
+  ]) {
+    test(`${platform}: reads ${language} through the correct translation API without opening a card`, async () => {
+      const spokenText = 'こんにちは。'.repeat(150);
+      const app = background({
+        platform,
+        detectedLanguage: language,
+        overrides: { apiMode: 'chat', chatModel: 'sarashina3-nano' },
+        result(endpoint) {
+          if (endpoint.endsWith('/audio/speech')) {
+            return { ok: true, arrayBuffer: async () => new Uint8Array([11, 22, 33]).buffer };
+          }
+          const body = endpoint.endsWith('/translate')
+            ? { translated_text: spokenText }
+            : { choices: [{ message: { content: spokenText } }] };
+          return new Response(JSON.stringify(body));
+        }
+      });
+      app.install();
+      assert.deepEqual(app.registeredMenus.find(menu => menu.id === 'sarashina-speak-selection'), {
+        id: 'sarashina-speak-selection', title: 'Sarashinaで選択部分を読上げ', contexts: ['selection']
+      });
+      await app.menu({ menuItemId: 'sarashina-speak-selection', selectionText: `  ${sourceText}  `, frameId: 3 }, { id: 42 });
+      assert.deepEqual(app.warnings, []);
+      assert.ok(app.requests[0].endpoint.endsWith(translationPath));
+      const translation = JSON.parse(app.requests[0].options.body);
+      if (language === 'en') {
+        assert.deepEqual(translation, { text: sourceText, source_lang: 'en', target_lang: 'ja' });
+      } else {
+        assert.equal(translation.model, 'sarashina3-nano');
+        assert.match(translation.messages[1].content, /日本語.*翻訳/u);
+        assert.ok(translation.messages[1].content.endsWith(sourceText));
+      }
+      const speech = app.requests.slice(1).map(request => {
+        assert.ok(request.endpoint.endsWith('/audio/speech'));
+        const payload = JSON.parse(request.options.body);
+        assert.equal(payload.model, 'sarashina3.2-tts');
+        assert.equal(payload.response_format, 'mp3');
+        assert.ok(Array.from(payload.input).length <= 700);
+        return payload.input;
+      });
+      assert.equal(speech.length, 2);
+      assert.equal(speech.join(''), spokenText);
+      assert.deepEqual(app.speechWaits, [10100]);
+      if (platform === 'Chrome') {
+        const requestId = app.extensionMessages[0].requestId;
+        assert.deepEqual(app.tabMessages[0].message, { action: 'ping' });
+        assert.deepEqual(app.tabMessages.slice(1).map(({ message }) => message.state), ['preparing']);
+        assert.deepEqual(app.offscreenDocuments[0].reasons, ['AUDIO_PLAYBACK']);
+        assert.deepEqual(app.extensionMessages.map(({ action, audio, final }) => [action, audio, final]), [
+          ['play_selection_speech', 'CxYh', false], ['play_selection_speech', 'CxYh', true]
+        ]);
+        assert.equal(app.extensionMessages[0].requestId, app.extensionMessages[1].requestId);
+        app.speechPlayback(requestId, { state: 'playing' });
+        app.speechPlayback(requestId, { level: 0.6 });
+        app.speechPlayback('stale', { state: 'hidden' });
+        app.speechPlayback(requestId, { state: 'hidden' });
+        assert.deepEqual(app.tabMessages.slice(1), [
+          { state: 'preparing' }, { state: 'playing' }, { level: 0.6 }, { state: 'hidden' }
+        ].map(status => ({
+          tabId: 42, options: { frameId: 0 },
+          message: { action: 'selection_speech_status', requestId, ...status }
+        })));
+      } else {
+        assert.deepEqual(app.tabMessages.map(({ message, options }) => [message.action, options.frameId]), [
+          ['prepare_selection_speech', 0], ['play_selection_speech', 0], ['play_selection_speech', 0]
+        ]);
+        const requestId = app.tabMessages[0].message.requestId;
+        assert.deepEqual(app.tabMessages.slice(1).map(({ message }) => [message.requestId, message.audio, message.final]), [
+          [requestId, 'CxYh', false], [requestId, 'CxYh', true]
+        ]);
+      }
+    });
+  }
+
+  test(`${platform}: releases the speech waiting indicator after a translation error`, async () => {
+    const app = background({
+      platform,
+      detectedLanguage: 'en',
+      result: new Response('{"message":"Unavailable"}', { status: 503 })
+    });
+    await app.menu({
+      menuItemId: 'sarashina-speak-selection', selectionText: 'Thank you for checking this extension.'
+    }, { id: 42 });
+    const messages = app.tabMessages.map(({ message }) => message).filter(message => message.action !== 'ping');
+    assert.equal(messages.length, 2);
+    assert.equal(messages[0].requestId, messages[1].requestId);
+    if (platform === 'Chrome') {
+      assert.deepEqual(messages.map(({ action, state }) => [action, state]), [
+        ['selection_speech_status', 'preparing'], ['selection_speech_status', 'hidden']
+      ]);
+    } else {
+      assert.deepEqual(messages.map(({ action }) => action), ['prepare_selection_speech', 'cancel_selection_speech']);
+    }
+    assert.deepEqual(app.extensionMessages, []);
+    assert.equal(app.warnings.length, 1);
+  });
+
+  for (const [language, sourceText, endpointSuffix] of [
+    ['en', 'Thank you for checking this extension.', '/translate'],
+    ['fr', 'Bonjour tout le monde, comment allez-vous ?', '/chat/completions'],
+    ['en', 'Thank you for checking this extension.', '/audio/speech']
+  ]) {
+    test(`${platform}: cancels speech during ${endpointSuffix}`, { timeout: 2000 }, async () => {
+      let releaseResponse;
+      let pendingSignal;
+      const responsePending = new Promise(resolve => { releaseResponse = resolve; });
+      let requestStarted;
+      const started = new Promise(resolve => { requestStarted = resolve; });
+      const app = background({
+        platform,
+        detectedLanguage: language,
+        result(endpoint, { signal }) {
+          if (!endpoint.endsWith(endpointSuffix)) return Response.json({ translated_text: '中止の確認です。' });
+          pendingSignal = signal;
+          requestStarted();
+          return responsePending;
+        }
+      });
+      const job = app.menu({ menuItemId: 'sarashina-speak-selection', selectionText: sourceText }, { id: 42 });
+      await started;
+      const { requestId } = app.tabMessages.find(({ message }) =>
+        message.state === 'preparing' || message.action === 'prepare_selection_speech').message;
+      const cancel = { action: 'abort_selection_speech', requestId };
+      assert.deepEqual(plain(await app.message(cancel, { tab: { id: 19 }, frameId: 0 })), { success: false });
+      assert.deepEqual(plain(await app.message(cancel, { tab: { id: 42 }, frameId: 4 })), { success: false });
+      assert.equal(pendingSignal.aborted, false);
+      assert.deepEqual(plain(await app.message(cancel, { tab: { id: 42 }, frameId: 0 })), { success: true });
+      assert.equal(pendingSignal.aborted, true);
+      const lateResponse = endpointSuffix === '/audio/speech'
+        ? { ok: true, arrayBuffer: async () => new Uint8Array([11, 22, 33]).buffer }
+        : Response.json({ translated_text: '中止の確認です。', choices: [{ message: { content: '中止の確認です。' } }] });
+      releaseResponse(lateResponse);
+      await job;
+
+      assert.equal(app.requests.length, endpointSuffix === '/audio/speech' ? 2 : 1);
+      assert.ok(!app.tabMessages.some(({ message }) => message.action === 'play_selection_speech'));
+      assert.deepEqual(app.extensionMessages, []);
+      assert.equal(app.warnings.length, 0);
+      const { message } = app.tabMessages.at(-1);
+      assert.equal(message.requestId, requestId);
+      if (platform === 'Chrome') assert.equal(message.state, 'hidden');
+      // Safari closes the page's playback context before telling the background to abort.
+      else assert.equal(message.action, 'prepare_selection_speech');
+    });
+  }
+}
+
+test('Chrome: restores waiting feedback when the page was open before the extension loaded', async () => {
+  const app = background({
+    platform: 'Chrome',
+    contentScriptLoaded: false,
+    detectedLanguage: 'en',
+    result(endpoint) {
+      if (endpoint.endsWith('/audio/speech')) {
+        return { ok: true, arrayBuffer: async () => new Uint8Array([11, 22, 33]).buffer };
+      }
+      return new Response('{"translated_text":"読み上げの確認です。"}');
+    }
+  });
+  await app.menu({
+    menuItemId: 'sarashina-speak-selection', selectionText: 'Thank you for checking this extension.'
+  }, { id: 42 });
+  assert.deepEqual(app.cssInjections, [{ target: { tabId: 42, frameIds: [0] }, files: ['content.css'] }]);
+  assert.ok(app.injections[0].files.includes('speech-status.bundle.js'));
+  assert.ok(app.injections[0].files.includes('content.js'));
+  assert.deepEqual(app.tabMessages.map(({ message }) => [message.action, message.state]), [
+    ['ping', undefined], ['selection_speech_status', 'preparing']
+  ]);
+  assert.equal(app.extensionMessages[0].action, 'play_selection_speech');
+  assert.deepEqual(app.warnings, []);
+});
 
 async function optionsPage(requestPermission) {
   const elements = new Map();

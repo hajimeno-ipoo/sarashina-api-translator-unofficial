@@ -2,6 +2,7 @@
 
 (() => {
   const ext = globalThis.browser || globalThis.chrome;
+  const speechStatus = globalThis.SarashinaSpeechStatus;
 
   const POPUP_CONTAINER_ID = "sarashina-translator-container";
   const PAGE_BAR_CONTAINER_ID = "sarashina-page-bar-container";
@@ -14,6 +15,7 @@
   let nuanceRequestId = 0;
   let selectionNuance = { status: "idle", text: "", error: "" };
   let selectionReplacement = { target: null, applied: false, busy: false, message: "", appliedText: "" };
+  let selectionSpeech;
 
   let isPageTranslating = false;
   let isPageTranslated = false;
@@ -40,10 +42,131 @@
 
   globalThis.SarashinaReading?.configure({ skipElement: isIconOrDecorativeElement });
 
+  function startSpeechMeter(playback) {
+    const { analyser, samples, requestId } = playback;
+    function sample() {
+      if (selectionSpeech !== playback || !playback.source) return;
+      analyser.getFloatTimeDomainData(samples);
+      let energy = 0;
+      for (const sample of samples) energy += sample * sample;
+      const level = Math.min(1, Math.sqrt(energy / samples.length) * 3);
+      speechStatus?.setLevel(requestId, level);
+      playback.meterFrame = requestAnimationFrame(sample);
+    }
+    playback.meterFrame = requestAnimationFrame(sample);
+  }
+
+  function stopSpeechMeter(playback) {
+    if (playback.meterFrame !== undefined) cancelAnimationFrame(playback.meterFrame);
+    playback.meterFrame = undefined;
+    speechStatus?.setLevel(playback.requestId, 0);
+  }
+
+  function closeSelectionSpeech(playback) {
+    if (!playback || selectionSpeech !== playback) return;
+    selectionSpeech = undefined;
+    stopSpeechMeter(playback);
+    speechStatus?.update(playback.requestId, "hidden");
+    playback.source?.stop();
+    void playback.context.close().catch(() => {});
+  }
+
+  async function prepareSelectionSpeech(requestId) {
+    closeSelectionSpeech(selectionSpeech);
+    const context = new AudioContext();
+    const playback = { requestId, context, audioQueue: [], playing: false, final: false };
+    selectionSpeech = playback;
+    speechStatus?.update(requestId, "preparing", () => {
+      if (selectionSpeech !== playback || playback.started) return;
+      closeSelectionSpeech(playback);
+      void ext.runtime.sendMessage({ action: "abort_selection_speech", requestId }).catch(() => {});
+    });
+    let timeout;
+    try {
+      const analyser = context.createAnalyser();
+      analyser.fftSize = 512;
+      analyser.connect(context.destination);
+      playback.analyser = analyser;
+      playback.samples = new Float32Array(analyser.fftSize);
+      await Promise.race([
+        context.resume(),
+        new Promise((resolve, reject) => {
+          timeout = setTimeout(() => reject(new Error("Safariが音声再生を許可しませんでした。")), 3000);
+        })
+      ]);
+    } catch (error) {
+      closeSelectionSpeech(playback);
+      throw error;
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  async function playSelectionSpeech(playback) {
+    playback.playing = true;
+    try {
+      while (playback.audioQueue.length) {
+        const encodedAudio = playback.audioQueue.shift();
+        const bytes = Uint8Array.from(atob(encodedAudio), char => char.charCodeAt(0));
+        const buffer = await playback.context.decodeAudioData(bytes.buffer);
+        if (selectionSpeech !== playback) return;
+
+        const source = playback.context.createBufferSource();
+        source.buffer = buffer;
+        source.connect(playback.analyser);
+        await new Promise(resolve => {
+          source.onended = resolve;
+          source.start();
+          playback.source = source;
+          if (!playback.started) {
+            playback.started = true;
+            speechStatus?.update(playback.requestId, "playing");
+          }
+          startSpeechMeter(playback);
+        });
+        playback.source = undefined;
+        if (selectionSpeech !== playback) return;
+        stopSpeechMeter(playback);
+        source.disconnect();
+      }
+    } catch (error) {
+      if (selectionSpeech === playback) console.warn("読み上げを再生できませんでした:", error.message);
+      closeSelectionSpeech(playback);
+    } finally {
+      playback.playing = false;
+      if (playback.final) closeSelectionSpeech(playback);
+    }
+  }
+
   // メッセージリスナー
   ext.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message.action === "ping") {
       sendResponse({ pong: true });
+      return;
+    }
+
+    if (message.action === "prepare_selection_speech") {
+      prepareSelectionSpeech(message.requestId)
+        .then(() => sendResponse({ success: true }))
+        .catch(error => sendResponse({ success: false, error: error.message }));
+      return true;
+    }
+
+    if (message.action === "play_selection_speech") {
+      if (selectionSpeech?.requestId !== message.requestId) {
+        sendResponse({ success: false, error: "読み上げを行うページが変わりました。" });
+        return;
+      }
+      selectionSpeech.audioQueue.push(message.audio);
+      selectionSpeech.final = message.final;
+      if (!selectionSpeech.playing) void playSelectionSpeech(selectionSpeech);
+      sendResponse({ success: true });
+      return;
+    }
+
+    if (message.action === "cancel_selection_speech") {
+      if (selectionSpeech?.requestId === message.requestId) closeSelectionSpeech(selectionSpeech);
+      sendResponse({ success: true });
       return;
     }
 

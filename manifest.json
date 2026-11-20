@@ -12,7 +12,8 @@
     "storage",
     "contextMenus",
     "activeTab",
-    "scripting"
+    "scripting",
+    "offscreen"
   ],
   "host_permissions": [
     "https://*/*",
@@ -48,6 +49,7 @@
       "js": [
         "selection-replacement.js",
         "reading.js",
+        "speech-status.bundle.js",
         "content.js"
       ],
       "css": [

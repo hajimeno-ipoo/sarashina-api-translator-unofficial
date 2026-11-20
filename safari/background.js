@@ -1,5 +1,7 @@
 // safari/background.js - Sarashina 翻訳 Safari拡張機能 サービスワーカー
 
+importScripts("language-detector.js");
+
 const ext = globalThis.browser || globalThis.chrome;
 
 const DEFAULT_SETTINGS = {
@@ -86,6 +88,12 @@ ext.runtime.onInstalled.addListener(() => {
   });
 
   ext.contextMenus.create({
+    id: "sarashina-speak-selection",
+    title: "Sarashinaで選択部分を読上げ",
+    contexts: ["selection"]
+  });
+
+  ext.contextMenus.create({
     id: "sarashina-explain-selection",
     title: "Sarashinaで選択部分を解説",
     contexts: ["selection"]
@@ -145,7 +153,7 @@ async function ensureContentScriptLoaded(tabId, frameId = 0) {
       });
       await ext.scripting.executeScript({
         target: { tabId, frameIds: [frameId] },
-        files: ["selection-replacement.js", "reading.js", "content.js"]
+        files: ["selection-replacement.js", "reading.js", "speech-status.bundle.js", "content.js"]
       });
       await new Promise((r) => setTimeout(r, 120));
       return true;
@@ -159,6 +167,17 @@ async function ensureContentScriptLoaded(tabId, frameId = 0) {
 // コンテキストメニュー押下時
 ext.contextMenus.onClicked.addListener(async (info, tab) => {
   if (!Number.isInteger(tab?.id) || tab.id < 0) return;
+
+  if (info.menuItemId === "sarashina-speak-selection") {
+    const text = (info.selectionText || "").trim();
+    if (!text) return;
+    try {
+      await speakSelection(text, tab.id);
+    } catch (error) {
+      console.warn("選択部分を読み上げられませんでした:", error.message);
+    }
+    return;
+  }
 
   if (info.menuItemId === "sarashina-read-selection") {
     const sourceText = (info.selectionText || "").trim();
@@ -264,6 +283,19 @@ ext.commands.onCommand.addListener(async (command) => {
 
 // メッセージハンドラ
 ext.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.action === "abort_selection_speech") {
+    const request = selectionSpeechRequest;
+    if (!request || request.id !== message.requestId
+        || request.tabId !== sender.tab?.id || sender.frameId !== 0) {
+      sendResponse({ success: false });
+      return;
+    }
+    selectionSpeechRequest = undefined;
+    request.controller.abort();
+    sendResponse({ success: true });
+    return;
+  }
+
   if (message.action === "prepare_api_key_storage") {
     prepareApiKeyStorage()
       .then(() => sendResponse({ success: true }))
@@ -370,10 +402,11 @@ function isJapaneseText(text) {
 }
 
 // Safari のサイトアクセス許可を確認してから、API 応答を一度だけ読み取る。
-async function requestApi(endpoint, apiKey, payload, errorLabel) {
+async function requestApi(endpoint, apiKey, payload, errorLabel, responseType = "json", signal) {
   const url = new URL(endpoint);
   const originPattern = `${url.protocol}//${url.hostname}/*`;
   const granted = await ext.permissions.contains({ origins: [originPattern] });
+  signal?.throwIfAborted();
   if (!granted) {
     throw new Error(`${url.hostname}へのアクセスが許可されていません。設定画面の「接続テスト」を押し、Safariのアクセス許可を確認してください。`);
   }
@@ -386,11 +419,15 @@ async function requestApi(endpoint, apiKey, payload, errorLabel) {
         "Authorization": `Bearer ${apiKey}`,
         "Content-Type": "application/json"
       },
+      signal,
       body: JSON.stringify(payload)
     });
   } catch (error) {
+    if (signal?.aborted) throw error;
     throw new Error(`${url.hostname}への通信に失敗しました。Safariのサイトアクセス許可とネットワークを確認してください。（${error.message}）`);
   }
+
+  if (response.ok && responseType === "audio") return response;
 
   const body = await response.text();
   let data;
@@ -410,7 +447,7 @@ async function requestApi(endpoint, apiKey, payload, errorLabel) {
 }
 
 // Sarashina 公式 Translate API を使用した翻訳
-async function callTranslateApi(apiKey, baseUrl, text, sourceLang, targetLang) {
+async function callTranslateApi(apiKey, baseUrl, text, sourceLang, targetLang, signal) {
   if (sourceLang === targetLang) {
     return {
       translatedText: text,
@@ -429,7 +466,7 @@ async function callTranslateApi(apiKey, baseUrl, text, sourceLang, targetLang) {
     target_lang: targetLang
   };
 
-  const data = await requestApi(endpoint, apiKey, payload, "Translate APIエラー");
+  const data = await requestApi(endpoint, apiKey, payload, "Translate APIエラー", "json", signal);
   if (!data.translated_text) {
     throw new Error("APIレスポンスから翻訳結果テキストを取得できませんでした。");
   }
@@ -440,7 +477,7 @@ async function callTranslateApi(apiKey, baseUrl, text, sourceLang, targetLang) {
   };
 }
 
-async function callChatCompletionsApi(apiKey, baseUrl, model, text, targetLang, preserveLineNumbers = false) {
+async function callChatCompletionsApi(apiKey, baseUrl, model, text, targetLang, preserveLineNumbers = false, signal) {
   const endpoint = `${baseUrl}/chat/completions`;
   const targetLabel = targetLang === "ja" ? "日本語" : "英語";
   const lineInstructions = preserveLineNumbers
@@ -463,7 +500,7 @@ async function callChatCompletionsApi(apiKey, baseUrl, model, text, targetLang, 
     max_completion_tokens: 4000
   };
 
-  const data = await requestApi(endpoint, apiKey, payload, "Chat APIエラー");
+  const data = await requestApi(endpoint, apiKey, payload, "Chat APIエラー", "json", signal);
   const choice = data.choices && data.choices[0];
   const translated = choice?.message?.content || "";
 
@@ -573,6 +610,105 @@ async function translateText(text, directionParam, preserveLineNumbers) {
   } else {
     return await callTranslateApi(apiKey, baseUrl, text, sourceLang, targetLang);
   }
+}
+
+let selectionSpeechRequest;
+const SPEECH_REQUEST_INTERVAL_MS = 10100;
+
+async function speakSelection(text, tabId) {
+  const previous = selectionSpeechRequest;
+  const controller = new AbortController();
+  const { signal } = controller;
+  const request = { tabId, id: crypto.randomUUID(), controller };
+  selectionSpeechRequest = request;
+  // 右クリックの操作をSafariに伝えるため、API通信を待つ前に再生を準備する。
+  const ready = ext.tabs.sendMessage(tabId, {
+    action: "prepare_selection_speech", requestId: request.id
+  }, { frameId: 0 });
+  previous?.controller.abort();
+  if (previous && previous.tabId !== tabId) void cancelSelectionSpeech(previous);
+
+  try {
+    const prepared = await ready;
+    if (request !== selectionSpeechRequest) return;
+    if (!prepared?.success) throw new Error(prepared?.error || "対象ページを再読み込みしてください。");
+
+    const settings = await getSettings();
+    if (request !== selectionSpeechRequest) return;
+    const apiKey = (settings.apiKey || "").trim();
+    if (!apiKey) throw new Error("Sarashina APIキーが設定されていません。");
+    const baseUrl = (settings.apiBaseUrl || "").trim().replace(/\/+$/, "") || DEFAULT_SETTINGS.apiBaseUrl;
+    const { translatedText } = globalThis.SarashinaDetectLanguage(text) === "en"
+      ? await callTranslateApi(apiKey, baseUrl, text, "en", "ja", signal)
+      : await callChatCompletionsApi(apiKey, baseUrl, settings.chatModel, text, "ja", false, signal);
+
+    const chunks = splitSpeechText(translatedText);
+    let nextSpeechRequestAt = 0;
+    for (const [index, input] of chunks.entries()) {
+      const wait = nextSpeechRequestAt - Date.now();
+      if (wait > 0) await new Promise(resolve => setTimeout(resolve, wait));
+      if (request !== selectionSpeechRequest) return;
+      // TTSは毎分6回まで。長文の1片目はすぐ生成し、後続のリクエストを間引く。
+      nextSpeechRequestAt = Date.now() + SPEECH_REQUEST_INTERVAL_MS;
+      const response = await requestApi(`${baseUrl}/audio/speech`, apiKey, {
+        model: "sarashina3.2-tts", input, voice: "ja_f_1", response_format: "mp3"
+      }, "TTS APIエラー", "audio", signal);
+      const audio = await encodeSpeechAudio(response);
+      if (request !== selectionSpeechRequest) return;
+      const result = await ext.tabs.sendMessage(tabId, {
+        action: "play_selection_speech", requestId: request.id, audio, final: index === chunks.length - 1
+      }, { frameId: 0 });
+      if (!result?.success) throw new Error(result?.error || "読み上げを再生できませんでした。");
+    }
+  } catch (error) {
+    if (request !== selectionSpeechRequest || signal.aborted) return;
+    selectionSpeechRequest = undefined;
+    await cancelSelectionSpeech(request);
+    throw error;
+  }
+}
+
+async function cancelSelectionSpeech(request) {
+  try {
+    await ext.tabs.sendMessage(request.tabId, {
+      action: "cancel_selection_speech", requestId: request.id
+    }, { frameId: 0 });
+  } catch {
+    // タブやページが閉じられていれば、音声も破棄されている。
+  }
+}
+
+function splitSpeechText(text) {
+  const supportedText = text.normalize("NFC").replace(/\r\n?/g, "\n")
+    .replace(/[^\p{Unified_Ideograph}ぁ-ゖゝ-ゟァ-ヺー-ヿｦ-ﾟ々〇〆a-zA-Z0-9Ａ-Ｚａ-ｚ０-９ \t\n!$%&',.\/:?！＄％＆＇，－．／：？～、。〜「」『』〖〗〈〉《》〔〕（）｢｣()\-]/gu, " ")
+    .trim();
+  if (!/[\p{L}\p{N}]/u.test(supportedText)) throw new Error("読み上げられる文字がありません。");
+
+  const characters = Array.from(supportedText);
+  const chunks = [];
+  const maxLength = 700;
+  for (let start = 0; start < characters.length;) {
+    let end = Math.min(start + maxLength, characters.length);
+    if (end < characters.length) {
+      const boundary = characters.slice(start, end).findLastIndex(char => /[。！？.!?\n]/u.test(char));
+      if (boundary + 1 >= maxLength / 2) end = start + boundary + 1;
+    }
+    const chunk = characters.slice(start, end).join("").trim();
+    if (chunk) chunks.push(Array.from(chunk).length === 1 ? `${chunk}。` : chunk);
+    start = end;
+  }
+  return chunks;
+}
+
+async function encodeSpeechAudio(response) {
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  if (!bytes.length) throw new Error("TTS APIから音声を取得できませんでした。");
+  // 拡張機能のメッセージで音声のバイナリを渡せるよう、Base64に変換する。
+  let binary = "";
+  for (let offset = 0; offset < bytes.length; offset += 0x4000) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x4000));
+  }
+  return btoa(binary);
 }
 
 async function testApiConnection(customSettings) {

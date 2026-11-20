@@ -1,0 +1,18 @@
+{
+  "name": "sarashina-speech-status",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "dependencies": {
+    "border-beam": "1.4.1",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "thinking-orbs": "0.3.2",
+    "voice-glow": "0.5.0"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2"
+  }
+}

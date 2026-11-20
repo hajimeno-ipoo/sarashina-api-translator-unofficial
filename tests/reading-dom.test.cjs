@@ -53,7 +53,7 @@ async function setup(browser, mode = 'normal', existingPage = null) {
       }) }
     });
     window.contentListeners = [];
-    window.chrome = { runtime: { onMessage: { addListener: (listener) => window.contentListeners.push(listener) }, sendMessage: async (request) => {
+    window.chrome = { runtime: { id: 'sarashina-fixture', onMessage: { addListener: (listener) => window.contentListeners.push(listener) }, sendMessage: async (request) => {
       if (request.action === 'translate') return {
         success: true,
         data: { translatedText: request.text.split('\n').map((line) => line.replace(/^(\[\d+\]) .*/, '$1 日本語')).join('\n') }
@@ -828,6 +828,52 @@ for (const engine of engines) {
         assert.equal(await page.evaluate(() => window.injected), undefined);
         await page.evaluate(() => SarashinaReading.remove());
         assert.equal(await page.evaluate(() => document.getElementById('article').innerHTML === beforeArticle), true);
+      } finally { await bounded(page.close(), 'close fixture page'); }
+    });
+
+    await t.test('an invalidated extension context discards a pending nuance result', async () => {
+      const page = await setup(browser);
+      const pageErrors = [];
+      page.on('pageerror', error => pageErrors.push(error.message));
+      try {
+        await page.evaluate(() => {
+          const sendMessage = chrome.runtime.sendMessage;
+          chrome.runtime.sendMessage = request => {
+            if (request.action === 'explain_translation_nuance') {
+              return new Promise((resolve, reject) => { window.rejectNuance = reject; });
+            }
+            return sendMessage(request);
+          };
+          contentListeners[0]({ action: 'translate_selection', sourceText: 'Original English.' }, {}, () => {});
+        });
+        const card = page.locator('#sarashina-translator-container');
+        await card.getByRole('button', { name: '訳文のニュアンス' }).click();
+        await page.waitForFunction(() => typeof window.rejectNuance === 'function');
+        await page.evaluate(() => {
+          delete chrome.runtime.id;
+          window.rejectNuance(new Error('Extension context invalidated.'));
+        });
+        await card.waitFor({ state: 'detached' });
+        assert.deepEqual(pageErrors, []);
+      } finally { await bounded(page.close(), 'close fixture page'); }
+    });
+
+    await t.test('speech cancellation tolerates a synchronous extension context rejection', async () => {
+      const page = await setup(browser);
+      try {
+        const requests = await page.evaluate(() => {
+          const sent = [];
+          chrome.runtime.sendMessage = message => {
+            sent.push(message);
+            throw new Error('Extension context invalidated.');
+          };
+          window.SarashinaSpeechStatus = { update: (id, state, cancel) => cancel() };
+          contentListeners[0]({
+            action: 'selection_speech_status', requestId: 'fixture-speech', state: 'preparing'
+          }, {}, () => {});
+          return sent;
+        });
+        assert.deepEqual(requests, [{ action: 'abort_selection_speech', requestId: 'fixture-speech' }]);
       } finally { await bounded(page.close(), 'close fixture page'); }
     });
 
