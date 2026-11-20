@@ -66,7 +66,9 @@
         status?.update(requestId, "preparing", () => {
           void sendOptionalMessage({ action: "abort_selection_speech", requestId });
         });
-      } else if (message.state) {
+      } else if (message.state === "playing") {
+        status?.showCaption(message.requestId, message.caption);
+      } else if (message.state === "hidden") {
         status?.update(message.requestId, message.state);
       }
       if (typeof message.level === "number") status?.setLevel(message.requestId, message.level);

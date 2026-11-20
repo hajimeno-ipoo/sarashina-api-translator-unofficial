@@ -1,6 +1,6 @@
 // safari/background.js - Sarashina 翻訳 Safari拡張機能 サービスワーカー
 
-importScripts("language-detector.js");
+importScripts("language-detector.js", "speech-captions.js");
 
 const ext = globalThis.browser || globalThis.chrome;
 
@@ -413,7 +413,7 @@ async function requestApi(endpoint, apiKey, payload, errorLabel, responseType = 
 
   let response;
   try {
-    response = await fetch(endpoint, {
+    const options = {
       method: "POST",
       headers: {
         "Authorization": `Bearer ${apiKey}`,
@@ -421,7 +421,10 @@ async function requestApi(endpoint, apiKey, payload, errorLabel, responseType = 
       },
       signal,
       body: JSON.stringify(payload)
-    });
+    };
+    response = responseType === "audio"
+      ? await globalThis.requestSpeechAudio(() => fetch(endpoint, options), signal)
+      : await fetch(endpoint, options);
   } catch (error) {
     if (signal?.aborted) throw error;
     throw new Error(`${url.hostname}への通信に失敗しました。Safariのサイトアクセス許可とネットワークを確認してください。（${error.message}）`);
@@ -613,7 +616,6 @@ async function translateText(text, directionParam, preserveLineNumbers) {
 }
 
 let selectionSpeechRequest;
-const SPEECH_REQUEST_INTERVAL_MS = 10100;
 
 async function speakSelection(text, tabId) {
   const previous = selectionSpeechRequest;
@@ -642,27 +644,27 @@ async function speakSelection(text, tabId) {
       ? await callTranslateApi(apiKey, baseUrl, text, "en", "ja", signal)
       : await callChatCompletionsApi(apiKey, baseUrl, settings.chatModel, text, "ja", false, signal);
 
-    const chunks = splitSpeechText(translatedText);
-    let nextSpeechRequestAt = 0;
-    for (const [index, input] of chunks.entries()) {
-      const wait = nextSpeechRequestAt - Date.now();
-      if (wait > 0) await new Promise(resolve => setTimeout(resolve, wait));
-      if (request !== selectionSpeechRequest) return;
-      // TTSは毎分6回まで。長文の1片目はすぐ生成し、後続のリクエストを間引く。
-      nextSpeechRequestAt = Date.now() + SPEECH_REQUEST_INTERVAL_MS;
+    if (request !== selectionSpeechRequest) return;
+    const chunks = globalThis.splitSpeechCaptions(translatedText);
+    const clips = await globalThis.prepareSpeechClips(chunks, async input => {
       const response = await requestApi(`${baseUrl}/audio/speech`, apiKey, {
         model: "sarashina3.2-tts", input, voice: "ja_f_1", response_format: "mp3"
       }, "TTS APIエラー", "audio", signal);
-      const audio = await encodeSpeechAudio(response);
+      return encodeSpeechAudio(response);
+    }, signal);
+
+    // 分割した音声はすべて生成してから、字幕と組にして再生する。
+    for (const [index, { audio, caption }] of clips.entries()) {
       if (request !== selectionSpeechRequest) return;
       const result = await ext.tabs.sendMessage(tabId, {
-        action: "play_selection_speech", requestId: request.id, audio, final: index === chunks.length - 1
+        action: "play_selection_speech", requestId: request.id, audio, caption, final: index === clips.length - 1
       }, { frameId: 0 });
       if (!result?.success) throw new Error(result?.error || "読み上げを再生できませんでした。");
     }
   } catch (error) {
     if (request !== selectionSpeechRequest || signal.aborted) return;
     selectionSpeechRequest = undefined;
+    controller.abort();
     await cancelSelectionSpeech(request);
     throw error;
   }
@@ -676,28 +678,6 @@ async function cancelSelectionSpeech(request) {
   } catch {
     // タブやページが閉じられていれば、音声も破棄されている。
   }
-}
-
-function splitSpeechText(text) {
-  const supportedText = text.normalize("NFC").replace(/\r\n?/g, "\n")
-    .replace(/[^\p{Unified_Ideograph}ぁ-ゖゝ-ゟァ-ヺー-ヿｦ-ﾟ々〇〆a-zA-Z0-9Ａ-Ｚａ-ｚ０-９ \t\n!$%&',.\/:?！＄％＆＇，－．／：？～、。〜「」『』〖〗〈〉《》〔〕（）｢｣()\-]/gu, " ")
-    .trim();
-  if (!/[\p{L}\p{N}]/u.test(supportedText)) throw new Error("読み上げられる文字がありません。");
-
-  const characters = Array.from(supportedText);
-  const chunks = [];
-  const maxLength = 700;
-  for (let start = 0; start < characters.length;) {
-    let end = Math.min(start + maxLength, characters.length);
-    if (end < characters.length) {
-      const boundary = characters.slice(start, end).findLastIndex(char => /[。！？.!?\n]/u.test(char));
-      if (boundary + 1 >= maxLength / 2) end = start + boundary + 1;
-    }
-    const chunk = characters.slice(start, end).join("").trim();
-    if (chunk) chunks.push(Array.from(chunk).length === 1 ? `${chunk}。` : chunk);
-    start = end;
-  }
-  return chunks;
 }
 
 async function encodeSpeechAudio(response) {

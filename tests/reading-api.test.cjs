@@ -50,8 +50,11 @@ function app(platform, { output = valid, status = 200, key = 'test-key', granted
   };
   const context = vm.createContext({
     chrome: ext, browser: ext, URL, console,
-    importScripts(file) {
-      vm.runInContext(fs.readFileSync(path.resolve(__dirname, '..', 'safari', file), 'utf8'), context);
+    importScripts(...files) {
+      const directory = platform === 'Chrome' ? '.' : 'safari';
+      for (const file of files) {
+        vm.runInContext(fs.readFileSync(path.resolve(__dirname, '..', directory, file), 'utf8'), context);
+      }
     },
     Date: { now: () => now },
     setTimeout(resolve, delay) { waits.push(delay); now += delay; resolve(); },

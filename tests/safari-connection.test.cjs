@@ -87,6 +87,7 @@ function background({
       onStartup: { addListener(fn) { startupListener = fn; } },
       onMessage: { addListener(fn) { listener = fn; } },
       getURL(file) { return `chrome-extension://test/${file}`; },
+      async getPlatformInfo() { return { os: 'mac' }; },
       async getContexts() { return offscreenDocuments; },
       async sendMessage(message) {
         extensionMessages.push(plain(message));
@@ -137,9 +138,12 @@ function background({
   const context = vm.createContext({
     browser: ext,
     chrome: ext,
-    URL, crypto, btoa, AbortController,
-    importScripts(file) {
-      vm.runInContext(fs.readFileSync(path.join(root, 'safari', file), 'utf8'), context);
+    URL, crypto, btoa, AbortController, clearTimeout,
+    importScripts(...files) {
+      const directory = platform === 'Chrome' ? '.' : 'safari';
+      for (const file of files) {
+        vm.runInContext(fs.readFileSync(path.join(root, directory, file), 'utf8'), context);
+      }
     },
     console: { ...console, warn(...args) { warnings.push(args); } },
     Date: detectedLanguage ? { now: () => speechClock } : Date,
@@ -203,14 +207,19 @@ for (const platform of ['Chrome', 'Safari']) {
     ['en', 'Thank you for checking this extension.', '/translate'],
     ['fr', 'Bonjour tout le monde, comment allez-vous ?', '/chat/completions']
   ]) {
-    test(`${platform}: reads ${language} through the correct translation API without opening a card`, async () => {
-      const spokenText = 'こんにちは。'.repeat(150);
+    test(`${platform}: reads ${language} and pairs every clip with its translated caption`, async () => {
+      const captions = language === 'en'
+        ? ['静止画で足2本を確認済み。', '動画は今回も着せ替え直後は空のままだったから、', 'バリアントの足チェックはできなかった。']
+        : ['はい。資料の内容を照合しました。', '次の字幕を音に合わせて表示します。'];
+      const spokenText = captions.join('');
       const app = background({
         platform,
         detectedLanguage: language,
         overrides: { apiMode: 'chat', chatModel: 'sarashina3-nano' },
         result(endpoint) {
           if (endpoint.endsWith('/audio/speech')) {
+            assert.equal(app.extensionMessages.length, 0);
+            assert.ok(!app.tabMessages.some(({ message }) => message.action === 'play_selection_speech'));
             return { ok: true, arrayBuffer: async () => new Uint8Array([11, 22, 33]).buffer };
           }
           const body = endpoint.endsWith('/translate')
@@ -239,42 +248,108 @@ for (const platform of ['Chrome', 'Safari']) {
         const payload = JSON.parse(request.options.body);
         assert.equal(payload.model, 'sarashina3.2-tts');
         assert.equal(payload.response_format, 'mp3');
-        assert.ok(Array.from(payload.input).length <= 700);
         return payload.input;
       });
-      assert.equal(speech.length, 2);
-      assert.equal(speech.join(''), spokenText);
-      assert.deepEqual(app.speechWaits, [10100]);
+      assert.deepEqual(speech, captions);
+      assert.deepEqual(app.speechWaits, []);
+      const expectedClips = captions.map((caption, index) => ['CxYh', caption, index === captions.length - 1]);
       if (platform === 'Chrome') {
         const requestId = app.extensionMessages[0].requestId;
         assert.deepEqual(app.tabMessages[0].message, { action: 'ping' });
         assert.deepEqual(app.tabMessages.slice(1).map(({ message }) => message.state), ['preparing']);
         assert.deepEqual(app.offscreenDocuments[0].reasons, ['AUDIO_PLAYBACK']);
-        assert.deepEqual(app.extensionMessages.map(({ action, audio, final }) => [action, audio, final]), [
-          ['play_selection_speech', 'CxYh', false], ['play_selection_speech', 'CxYh', true]
-        ]);
-        assert.equal(app.extensionMessages[0].requestId, app.extensionMessages[1].requestId);
-        app.speechPlayback(requestId, { state: 'playing' });
+        assert.deepEqual(app.extensionMessages.map(({ action, requestId, audio, caption, final }) =>
+          [action, requestId, audio, caption, final]), expectedClips.map(clip => ['play_selection_speech', requestId, ...clip]));
+        for (const caption of captions) app.speechPlayback(requestId, { state: 'playing', caption });
         app.speechPlayback(requestId, { level: 0.6 });
         app.speechPlayback('stale', { state: 'hidden' });
         app.speechPlayback(requestId, { state: 'hidden' });
         assert.deepEqual(app.tabMessages.slice(1), [
-          { state: 'preparing' }, { state: 'playing' }, { level: 0.6 }, { state: 'hidden' }
+          { state: 'preparing' }, ...captions.map(caption => ({ state: 'playing', caption })), { level: 0.6 }, { state: 'hidden' }
         ].map(status => ({
           tabId: 42, options: { frameId: 0 },
           message: { action: 'selection_speech_status', requestId, ...status }
         })));
       } else {
         assert.deepEqual(app.tabMessages.map(({ message, options }) => [message.action, options.frameId]), [
-          ['prepare_selection_speech', 0], ['play_selection_speech', 0], ['play_selection_speech', 0]
+          ['prepare_selection_speech', 0], ...captions.map(() => ['play_selection_speech', 0])
         ]);
         const requestId = app.tabMessages[0].message.requestId;
-        assert.deepEqual(app.tabMessages.slice(1).map(({ message }) => [message.requestId, message.audio, message.final]), [
-          [requestId, 'CxYh', false], [requestId, 'CxYh', true]
-        ]);
+        assert.deepEqual(app.tabMessages.slice(1).map(({ message }) =>
+          [message.requestId, message.audio, message.caption, message.final]), expectedClips.map(clip => [requestId, ...clip]));
       }
     });
   }
+
+  test(`${platform}: buffers all speech while respecting Retry-After and the six-request limit`, async () => {
+    const translated = '長い文章の字幕を確認します。'.repeat(6);
+    let attempts = 0;
+    const app = background({
+      platform,
+      detectedLanguage: 'en',
+      result(endpoint) {
+        if (!endpoint.endsWith('/audio/speech')) return Response.json({ translated_text: translated });
+        assert.equal(app.extensionMessages.length, 0);
+        assert.ok(!app.tabMessages.some(({ message }) => message.action === 'play_selection_speech'));
+        if (++attempts === 1) {
+          return new Response('{"message":"Rate limited"}', { status: 429, headers: { 'Retry-After': '2' } });
+        }
+        return new Response(new Uint8Array([11, 22, 33]));
+      }
+    });
+    await app.menu({
+      menuItemId: 'sarashina-speak-selection', selectionText: 'Thank you for checking this extension.'
+    }, { id: 42 });
+    assert.equal(attempts, 7);
+    assert.deepEqual(app.speechWaits, [2000, 20000, 20000, 18000]);
+    const playMessages = (platform === 'Chrome' ? app.extensionMessages : app.tabMessages.map(({ message }) => message))
+      .filter(({ action }) => action === 'play_selection_speech');
+    assert.equal(playMessages.length, 6);
+    assert.deepEqual(playMessages.map(({ final }) => final), [false, false, false, false, false, true]);
+    assert.deepEqual(app.warnings, []);
+  });
+
+  test(`${platform}: prepares two clips concurrently and plays them in caption order`, { timeout: 2000 }, async () => {
+    const captions = ['最初の字幕を表示します。', '次の音声と字幕を合わせます。', '最後の音声を再生します。'];
+    const requested = [];
+    const pending = captions.map(() => {
+      let start;
+      let complete;
+      const started = new Promise(resolve => { start = resolve; });
+      const response = new Promise(resolve => { complete = resolve; });
+      return { started, response, start, complete };
+    });
+    const app = background({
+      platform,
+      detectedLanguage: 'en',
+      result(endpoint, options) {
+        if (!endpoint.endsWith('/audio/speech')) return Response.json({ translated_text: captions.join('') });
+        const index = captions.indexOf(JSON.parse(options.body).input);
+        requested.push(index);
+        pending[index].start();
+        return pending[index].response;
+      }
+    });
+    const job = app.menu({
+      menuItemId: 'sarashina-speak-selection', selectionText: 'Thank you for checking this extension.'
+    }, { id: 42 });
+    await Promise.all(pending.slice(0, 2).map(({ started }) => started));
+    assert.deepEqual(requested, [0, 1]);
+    pending[1].complete(new Response(Uint8Array.of(2)));
+    await pending[2].started;
+    assert.deepEqual(requested, [0, 1, 2]);
+    pending[2].complete(new Response(Uint8Array.of(3)));
+    assert.equal(app.extensionMessages.length, 0);
+    assert.ok(!app.tabMessages.some(({ message }) => message.action === 'play_selection_speech'));
+    pending[0].complete(new Response(Uint8Array.of(1)));
+    await job;
+    const playback = (platform === 'Chrome' ? app.extensionMessages : app.tabMessages.map(({ message }) => message))
+      .filter(({ action }) => action === 'play_selection_speech');
+    assert.deepEqual(playback.map(({ audio, caption }) => [audio, caption]), [
+      ['AQ==', captions[0]], ['Ag==', captions[1]], ['Aw==', captions[2]]
+    ]);
+    assert.deepEqual(app.warnings, []);
+  });
 
   test(`${platform}: releases the speech waiting indicator after a translation error`, async () => {
     const app = background({
@@ -348,6 +423,28 @@ for (const platform of ['Chrome', 'Safari']) {
     });
   }
 }
+
+test('cancels a queued speech retry without waiting for the rate limit to expire', async () => {
+  let startedWaiting;
+  const waiting = new Promise(resolve => { startedWaiting = resolve; });
+  let cancelled = false;
+  let requests = 0;
+  const context = vm.createContext({
+    setTimeout() { startedWaiting(); return 1; },
+    clearTimeout(id) { cancelled = id === 1; }
+  });
+  vm.runInContext(fs.readFileSync(path.join(root, 'speech-captions.js'), 'utf8'), context);
+  const controller = new AbortController();
+  const job = context.requestSpeechAudio(() => {
+    requests++;
+    return Promise.resolve(new Response(null, { status: 429, headers: { 'Retry-After': '40' } }));
+  }, controller.signal);
+  await waiting;
+  controller.abort();
+  await assert.rejects(job, { name: 'AbortError' });
+  assert.equal(cancelled, true);
+  assert.equal(requests, 1);
+});
 
 test('Chrome: restores waiting feedback when the page was open before the extension loaded', async () => {
   const app = background({

@@ -31,8 +31,8 @@ function sendAudioLevel(session) {
 
 async function playNextSpeechChunk(session) {
   if (session !== playback) return;
-  const encodedAudio = session.queue.shift();
-  if (!encodedAudio) {
+  const chunk = session.queue.shift();
+  if (!chunk) {
     if (session.final) finishPlayback(session);
     return;
   }
@@ -47,10 +47,10 @@ async function playNextSpeechChunk(session) {
       audioContext.createMediaElementSource(player).connect(analyser);
       analyser.connect(audioContext.destination);
     }
-    player.src = `data:audio/mpeg;base64,${encodedAudio}`;
+    player.src = `data:audio/mpeg;base64,${chunk.audio}`;
     await Promise.all([audioContext.resume(), player.play()]);
     if (session !== playback) return;
-    notifyPlayback(session, { state: "playing" });
+    notifyPlayback(session, { state: "playing", caption: chunk.caption });
     meterTimer = setInterval(() => sendAudioLevel(session), 66);
   } catch (error) {
     finishPlayback(session);
@@ -88,7 +88,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     playback = { requestId: message.requestId, queue: [], final: false, playing: false };
   }
   const session = playback;
-  session.queue.push(message.audio);
+  session.queue.push({ audio: message.audio, caption: message.caption });
   session.final = message.final;
   if (session.playing) {
     sendResponse({ success: true });

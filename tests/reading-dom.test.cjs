@@ -899,9 +899,16 @@ for (const engine of engines) {
             }), message);
           } }
         };
-        vm.runInNewContext(fs.readFileSync(path.join(__dirname, '..', 'background.js'), 'utf8'), {
-          chrome, console, URL, setTimeout, clearTimeout
-        }, { filename: 'background.js' });
+        const backgroundContext = vm.createContext({
+          chrome, console, URL, setTimeout, clearTimeout,
+          importScripts(...files) {
+            for (const file of files) {
+              vm.runInContext(fs.readFileSync(path.join(__dirname, '..', file), 'utf8'), backgroundContext);
+            }
+          }
+        });
+        vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'background.js'), 'utf8'), backgroundContext,
+          { filename: 'background.js' });
         await popup.exposeFunction('bridgeToBackground', (message) => new Promise((resolve) => {
           backgroundListener(message, {}, resolve);
         }));

@@ -1,5 +1,7 @@
 // background.js - Sarashina 翻訳 サービスワーカー（双方向翻訳・安全フィルタリング対応）
 
+importScripts("speech-captions.js");
+
 const DEFAULT_SETTINGS = {
   apiBaseUrl: "https://api.sarashina.ai/v1",
   apiMode: "translate", // "translate" (公式専用API: sarashina3-translate) または "chat" (Chat Completions)
@@ -295,7 +297,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     const request = selectionSpeechRequest;
     if (request?.id === message.requestId && sender.url === chrome.runtime.getURL("speech-player.html")) {
       if (message.state === "hidden") selectionSpeechRequest = undefined;
-      void sendSpeechStatus(request, { state: message.state, level: message.level });
+      void sendSpeechStatus(request, { state: message.state, level: message.level, caption: message.caption });
     }
     return;
   }
@@ -643,7 +645,6 @@ async function translateText(text, directionParam, preserveLineNumbers) {
 
 let selectionSpeechRequest;
 let speechDocumentCreation;
-const SPEECH_REQUEST_INTERVAL_MS = 10100;
 
 async function ensureSpeechDocument() {
   speechDocumentCreation ??= (async () => {
@@ -712,53 +713,28 @@ async function playSelectionSpeech(text, request) {
     : await callChatCompletionsApi(apiKey, baseUrl, settings.chatModel, text, "ja", false, signal);
 
   signal.throwIfAborted();
-  let nextSpeechRequestAt = 0;
-  const chunks = splitSpeechText(translatedText);
-  for (const [index, input] of chunks.entries()) {
-    const wait = nextSpeechRequestAt - Date.now();
-    if (wait > 0) await new Promise(resolve => setTimeout(resolve, wait));
-    if (request !== selectionSpeechRequest) return;
-    // TTSは毎分6回まで。長文の1片目はすぐ生成し、後続のリクエストを間引く。
-    nextSpeechRequestAt = Date.now() + SPEECH_REQUEST_INTERVAL_MS;
-    const response = await fetch(`${baseUrl}/audio/speech`, {
+  const chunks = splitSpeechCaptions(translatedText);
+  const prepared = await prepareSpeechClips(chunks, async input => {
+    const response = await requestSpeechAudio(() => fetch(`${baseUrl}/audio/speech`, {
       method: "POST",
       signal,
       headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
       body: JSON.stringify({ model: "sarashina3.2-tts", input, voice: "ja_f_1", response_format: "mp3" })
-    });
+    }), signal);
     if (!response.ok) throw new Error(`TTS APIエラー (HTTP ${response.status})`);
-    const audio = await encodeSpeechAudio(response);
-    if (request !== selectionSpeechRequest) return;
-    await ensureSpeechDocument();
+    return await encodeSpeechAudio(response);
+  }, signal);
+
+  if (request !== selectionSpeechRequest) return;
+  await ensureSpeechDocument();
+  for (const [index, { audio, caption }] of prepared.entries()) {
     if (request !== selectionSpeechRequest) return;
     request.hasPlayer = true;
     const result = await chrome.runtime.sendMessage({
-      action: "play_selection_speech", requestId: request.id, audio, final: index === chunks.length - 1
+      action: "play_selection_speech", requestId: request.id, audio, caption, final: index === prepared.length - 1
     });
     if (!result?.success) throw new Error(result?.error || "読み上げを再生できませんでした。");
   }
-}
-
-function splitSpeechText(text) {
-  const supportedText = text.normalize("NFC").replace(/\r\n?/g, "\n")
-    .replace(/[^\p{Unified_Ideograph}ぁ-ゖゝ-ゟァ-ヺー-ヿｦ-ﾟ々〇〆a-zA-Z0-9Ａ-Ｚａ-ｚ０-９ \t\n!$%&',.\/:?！＄％＆＇，－．／：？～、。〜「」『』〖〗〈〉《》〔〕（）｢｣()\-]/gu, " ")
-    .trim();
-  if (!/[\p{L}\p{N}]/u.test(supportedText)) throw new Error("読み上げられる文字がありません。");
-
-  const characters = Array.from(supportedText);
-  const chunks = [];
-  const maxLength = 700;
-  for (let start = 0; start < characters.length;) {
-    let end = Math.min(start + maxLength, characters.length);
-    if (end < characters.length) {
-      const boundary = characters.slice(start, end).findLastIndex(char => /[。！？.!?\n]/u.test(char));
-      if (boundary + 1 >= maxLength / 2) end = start + boundary + 1;
-    }
-    const chunk = characters.slice(start, end).join("").trim();
-    if (chunk) chunks.push(Array.from(chunk).length === 1 ? `${chunk}。` : chunk);
-    start = end;
-  }
-  return chunks;
 }
 
 async function encodeSpeechAudio(response) {

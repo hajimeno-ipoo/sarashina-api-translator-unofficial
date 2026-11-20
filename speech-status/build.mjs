@@ -47,3 +47,4 @@ await build({
   }
 });
 await copyFile(output, join(root, "safari", "speech-status.bundle.js"));
+await copyFile(join(root, "speech-captions.js"), join(root, "safari", "speech-captions.js"));

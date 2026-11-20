@@ -6,13 +6,12 @@ import { VoiceBeam } from "voice-glow";
 const radius = 16;
 const bannerId = "sarashina-speech-status";
 const motionPreference = matchMedia("(prefers-reduced-motion: reduce)");
-const labels = { preparing: "読み上げを準備中", playing: "読み上げ中" };
 const hostStyle = {
   all: "initial",
   boxSizing: "border-box",
   position: "fixed",
   inset: "24px 0 auto",
-  width: "min(350px, calc(100% - 32px))",
+  width: "min(450px, calc(100% - 32px))",
   marginInline: "auto",
   display: "block",
   pointerEvents: "none",
@@ -52,6 +51,13 @@ const cancelStyle = {
   font: "400 22px / 1 system-ui, sans-serif",
   cursor: "pointer"
 };
+const captionStyle = {
+  fontSize: 18,
+  fontWeight: 600,
+  textAlign: "center",
+  textWrap: "balance",
+  overflowWrap: "anywhere"
+};
 
 let current;
 
@@ -73,7 +79,9 @@ function Banner({ status }) {
           style={{ flex: "0 0 64px" }}
         />
       )}
-      <span role="status">{labels[status.state]}</span>
+      <span role="status" style={preparing ? undefined : captionStyle}>
+        {preparing ? "読み上げを準備中" : status.caption}
+      </span>
       {canCancel && (
         <button
           type="button"
@@ -156,4 +164,13 @@ function setLevel(requestId, level) {
   }
 }
 
-globalThis.SarashinaSpeechStatus = { update, setLevel };
+function showCaption(requestId, caption) {
+  if (current?.requestId !== requestId || typeof caption !== "string" || !caption
+      || (current.state === "playing" && current.caption === caption)) return;
+  if (current.state !== "playing") current.level = 0;
+  current.state = "playing";
+  current.caption = caption;
+  renderBanner();
+}
+
+globalThis.SarashinaSpeechStatus = { update, showCaption, setLevel };

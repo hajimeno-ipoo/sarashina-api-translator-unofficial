@@ -31,6 +31,7 @@
 		1894B3C2307E1BD700C0BBF6 /* selection-replacement.js in Resources */ = {isa = PBXBuildFile; fileRef = 1894B3C1307E1BD700C0BBF6 /* selection-replacement.js */; };
 		1894B3C4307E1BD700C0BBF6 /* reading.js in Resources */ = {isa = PBXBuildFile; fileRef = 1894B3C3307E1BD700C0BBF6 /* reading.js */; };
 		8EAF008E5971469E8B297848 /* speech-status.bundle.js in Resources */ = {isa = PBXBuildFile; fileRef = 8EAF008E5971469E8B297849 /* speech-status.bundle.js */; };
+		8EAF008E5971469E8B297850 /* speech-captions.js in Resources */ = {isa = PBXBuildFile; fileRef = 8EAF008E5971469E8B297851 /* speech-captions.js */; };
 		1894B3C6307E1BD700C0BBF6 /* terms-notice.html in Resources */ = {isa = PBXBuildFile; fileRef = 1894B3C5307E1BD700C0BBF6 /* terms-notice.html */; };
 /* End PBXBuildFile section */
 
@@ -84,6 +85,7 @@
 		1894B3C1307E1BD700C0BBF6 /* selection-replacement.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; name = "selection-replacement.js"; path = "../../../safari/selection-replacement.js"; sourceTree = "<group>"; };
 		1894B3C3307E1BD700C0BBF6 /* reading.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; name = "reading.js"; path = "../../../safari/reading.js"; sourceTree = "<group>"; };
 		8EAF008E5971469E8B297849 /* speech-status.bundle.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; name = "speech-status.bundle.js"; path = "../../../safari/speech-status.bundle.js"; sourceTree = "<group>"; };
+		8EAF008E5971469E8B297851 /* speech-captions.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; name = "speech-captions.js"; path = "../../../safari/speech-captions.js"; sourceTree = "<group>"; };
 		1894B3C5307E1BD700C0BBF6 /* terms-notice.html */ = {isa = PBXFileReference; lastKnownFileType = text.html; name = "terms-notice.html"; path = "../../../safari/terms-notice.html"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -170,6 +172,7 @@
 				1894B3C1307E1BD700C0BBF6 /* selection-replacement.js */,
 				1894B3C3307E1BD700C0BBF6 /* reading.js */,
 				8EAF008E5971469E8B297849 /* speech-status.bundle.js */,
+				8EAF008E5971469E8B297851 /* speech-captions.js */,
 				1894B3C5307E1BD700C0BBF6 /* terms-notice.html */,
 			);
 			name = Resources;
@@ -275,6 +278,7 @@
 				1894B3C2307E1BD700C0BBF6 /* selection-replacement.js in Resources */,
 				1894B3C4307E1BD700C0BBF6 /* reading.js in Resources */,
 				8EAF008E5971469E8B297848 /* speech-status.bundle.js in Resources */,
+				8EAF008E5971469E8B297850 /* speech-captions.js in Resources */,
 				1894B3C6307E1BD700C0BBF6 /* terms-notice.html in Resources */,
 				1894B3BE307E1BD700C0BBF6 /* manifest.json in Resources */,
 				1894B3B8307E1BD700C0BBF6 /* content.css in Resources */,

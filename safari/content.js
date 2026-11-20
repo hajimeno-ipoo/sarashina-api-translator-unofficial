@@ -106,8 +106,8 @@
     playback.playing = true;
     try {
       while (playback.audioQueue.length) {
-        const encodedAudio = playback.audioQueue.shift();
-        const bytes = Uint8Array.from(atob(encodedAudio), char => char.charCodeAt(0));
+        const { audio, caption } = playback.audioQueue.shift();
+        const bytes = Uint8Array.from(atob(audio), char => char.charCodeAt(0));
         const buffer = await playback.context.decodeAudioData(bytes.buffer);
         if (selectionSpeech !== playback) return;
 
@@ -122,6 +122,7 @@
             playback.started = true;
             speechStatus?.update(playback.requestId, "playing");
           }
+          speechStatus?.showCaption(playback.requestId, caption);
           startSpeechMeter(playback);
         });
         playback.source = undefined;
@@ -157,7 +158,7 @@
         sendResponse({ success: false, error: "読み上げを行うページが変わりました。" });
         return;
       }
-      selectionSpeech.audioQueue.push(message.audio);
+      selectionSpeech.audioQueue.push({ audio: message.audio, caption: message.caption });
       selectionSpeech.final = message.final;
       if (!selectionSpeech.playing) void playSelectionSpeech(selectionSpeech);
       sendResponse({ success: true });
