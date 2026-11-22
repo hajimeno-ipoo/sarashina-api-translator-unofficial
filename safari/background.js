@@ -296,6 +296,16 @@ ext.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return;
   }
 
+  if (message.action === "open_options") {
+    const open = ext.runtime.openOptionsPage
+      ? ext.runtime.openOptionsPage()
+      : ext.tabs.create({ url: ext.runtime.getURL("options.html") });
+    Promise.resolve(open)
+      .then(() => sendResponse({ success: true }))
+      .catch(() => sendResponse({ success: false }));
+    return true;
+  }
+
   if (message.action === "prepare_api_key_storage") {
     prepareApiKeyStorage()
       .then(() => sendResponse({ success: true }))

@@ -5,358 +5,196 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Sarashina 翻訳（非公式）</title>
   <style>
-    * {
-      box-sizing: border-box;
-      margin: 0;
-      padding: 0;
-    }
+    * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
     body {
-      width: 360px;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-      background-color: #f8fafc;
-      color: #0f172a;
+      /* The toolbar popup uses the document width to size its viewport. */
+      width: 440px;
+      margin: 0;
+      color: #fff;
+      color-scheme: dark;
+      font: 13px/1.55 system-ui, sans-serif;
+    }
+    .popup {
       padding: 16px;
+      background: #202020;
+      border-radius: 16px;
+      overflow: hidden;
     }
-    .header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      margin-bottom: 12px;
-      padding-bottom: 8px;
-      border-bottom: 1px solid #e2e8f0;
-    }
-    .title-group {
+    .header, .title-group, .controls, .result-header {
       display: flex;
       align-items: center;
       gap: 8px;
     }
-    .app-icon {
-      width: 20px;
-      height: 20px;
-      vertical-align: middle;
-    }
-    .title {
-      font-size: 15px;
-      font-weight: 700;
-      color: #1e293b;
-    }
-    .tag {
-      font-size: 10px;
-      background: #ffe4e6;
-      color: #e11d48;
-      padding: 2px 6px;
-      border-radius: 4px;
-      font-weight: 600;
-    }
-    .settings-btn {
-      background: none;
-      border: none;
-      cursor: pointer;
-      color: #64748b;
+    .header, .result-header { justify-content: space-between; }
+    .title-group { flex-wrap: wrap; }
+    .title { font-size: 15px; font-weight: 700; }
+    .tag, .notice { color: #bec8d2; font-size: 12px; }
+    .app-icon { width: 26px; height: 26px; }
+    .settings-btn { width: 34px; flex-shrink: 0; padding: 0; font-size: 18px; }
+    .notice { margin: 8px 0 10px; }
+    .tabs {
+      display: flex;
+      gap: 4px;
       padding: 4px;
-      border-radius: 4px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
-    .settings-btn:hover {
-      background-color: #e2e8f0;
-      color: #0f172a;
-    }
-    .warning-banner {
-      display: none;
-      background: #fef2f2;
-      border: 1px solid #fecaca;
-      color: #991b1b;
-      padding: 10px;
-      border-radius: 8px;
-      font-size: 12px;
-      margin-bottom: 12px;
-      line-height: 1.4;
-    }
-    .warning-banner a {
-      color: #dc2626;
-      font-weight: 600;
-      text-decoration: underline;
-      cursor: pointer;
-    }
-    .full-page-section {
-      background: #ffffff;
-      border: 1px solid #e2e8f0;
-      border-radius: 8px;
-      padding: 12px;
-      margin-bottom: 12px;
-    }
-    .full-page-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      margin-bottom: 8px;
-    }
-    .full-page-title {
-      font-size: 12px;
-      font-weight: 700;
-      color: #334155;
-    }
-    .full-page-controls {
-      display: flex;
-      gap: 8px;
-      align-items: center;
-    }
-    .full-page-select {
-      flex: 1;
-      padding: 6px 8px;
-      font-size: 12px;
-      border: 1px solid #cbd5e1;
-      border-radius: 6px;
-      background-color: #f8fafc;
-      color: #1e293b;
-    }
-    .full-page-btn {
-      background: #e11d48;
-      color: #ffffff;
-      border: none;
-      padding: 7px 12px;
-      font-size: 12px;
-      font-weight: 600;
-      border-radius: 6px;
-      cursor: pointer;
-      white-space: nowrap;
-      transition: background 0.15s ease;
-    }
-    .full-page-btn:hover {
-      background: #be123c;
-    }
-    .full-page-btn:disabled {
-      background: #94a3b8;
-      cursor: not-allowed;
-    }
-    .divider {
-      height: 1px;
-      background: #e2e8f0;
       margin: 12px 0;
+      border-radius: 10px;
+      background: #151515;
     }
-    .form-group {
-      margin-bottom: 12px;
+    .tabs button {
+      flex: 1;
+      white-space: nowrap;
+      background: transparent;
+      border-color: transparent;
+      color: #d1d7de;
     }
-    label {
-      display: block;
-      font-size: 11px;
-      font-weight: 700;
-      color: #64748b;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-      margin-bottom: 4px;
+    .tabs button[aria-selected=true] { background: #393c40; color: #fff; }
+    .section, .result-group {
+      padding: 12px;
+      border: 1px solid #4b4b4b;
+      border-radius: 12px;
+      background: #272727;
     }
+    .section + .section, .result-group { margin-top: 10px; }
+    .section h2 { margin: 0 0 6px; font-size: 13px; }
+    .section p { margin: 0 0 8px; color: #bec8d2; font-size: 12px; }
+    .section .controls { flex-wrap: wrap; }
+    label { display: block; margin-bottom: 6px; font-weight: 600; }
     textarea {
       width: 100%;
-      height: 72px;
+      min-height: 86px;
       padding: 8px 10px;
-      border: 1px solid #cbd5e1;
-      border-radius: 6px;
-      font-size: 13px;
-      line-height: 1.4;
       resize: vertical;
-      font-family: inherit;
+      line-height: 1.45;
+      margin-bottom: 8px;
     }
-    textarea:focus {
-      outline: none;
-      border-color: #e11d48;
-      box-shadow: 0 0 0 2px rgba(225, 29, 72, 0.2);
-    }
-    .controls {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 8px;
-      margin-bottom: 12px;
-    }
-    select {
-      flex: 1;
-      padding: 6px 8px;
-      font-size: 12px;
-      border: 1px solid #cbd5e1;
-      border-radius: 6px;
-      background-color: #ffffff;
-      color: #1e293b;
-    }
-    select:focus {
-      outline: none;
-      border-color: #e11d48;
-    }
-    .translate-btn {
-      background: #e11d48;
-      color: #ffffff;
-      border: none;
-      padding: 7px 16px;
-      font-size: 13px;
-      font-weight: 600;
-      border-radius: 6px;
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      transition: background 0.15s ease;
-    }
-    .translate-btn:hover {
-      background: #be123c;
-    }
-    .translate-btn:disabled {
-      background: #94a3b8;
-      cursor: not-allowed;
-    }
-    .result-group {
-      display: none;
-      background: #ffffff;
-      border: 1px solid #e2e8f0;
+    select { min-width: 0; flex: 1 1 auto; }
+    button, select, textarea {
+      min-height: 34px;
+      border: 1px solid #686d73;
       border-radius: 8px;
-      padding: 10px 12px;
-      position: relative;
+      background: #303338;
+      color: #fff;
+      font: inherit;
     }
-    .result-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-bottom: 6px;
+    button, select { padding: 5px 9px; cursor: pointer; }
+    button { font-weight: 600; }
+    button:enabled:hover, select:enabled:hover { background: #41454a; }
+    button:disabled { opacity: .6; cursor: default; }
+    button:focus-visible, select:focus-visible, textarea:focus-visible, a:focus-visible {
+      outline: 2px solid #c1e4ff;
+      outline-offset: 2px;
     }
-    .result-title {
-      font-size: 11px;
-      font-weight: 700;
-      color: #64748b;
-      text-transform: uppercase;
+    button.primary, button.primary:enabled:hover {
+      background: #c1e4ff;
+      color: #18252f;
+      border-color: transparent;
     }
-    .copy-btn {
-      background: none;
-      border: 1px solid #cbd5e1;
-      border-radius: 4px;
-      padding: 2px 8px;
-      font-size: 11px;
-      cursor: pointer;
-      color: #475569;
-    }
-    .copy-btn:hover {
-      background: #f1f5f9;
-      color: #0f172a;
-    }
-    .copy-btn.copied {
-      background: #16a34a;
-      color: #ffffff;
-      border-color: #16a34a;
-    }
+    #copy-btn.copied { background: #bcf1da; color: #17362c; border-color: transparent; }
+    .result-header { font-weight: 700; }
     .result-text {
-      font-size: 13px;
-      line-height: 1.5;
-      color: #0f172a;
+      margin-top: 7px;
+      max-height: 170px;
+      overflow: auto;
       white-space: pre-wrap;
-      word-break: break-word;
-      max-height: 140px;
-      overflow-y: auto;
+      overflow-wrap: anywhere;
     }
-    .error-box {
-      display: none;
-      background: #fef2f2;
-      border-left: 3px solid #ef4444;
+    .result-progress { display: flex; align-items: center; gap: 8px; min-height: 34px; font-weight: 600; }
+    .warning-banner, .error-box {
       padding: 8px 10px;
-      font-size: 12px;
-      color: #b91c1c;
-      border-radius: 4px;
-      margin-top: 8px;
-      line-height: 1.4;
-      word-break: break-word;
+      border-radius: 8px;
+      overflow-wrap: anywhere;
+      background: #452c2e;
+      color: #ffdddd;
     }
-    .footer {
-      margin-top: 12px;
-      text-align: right;
-      font-size: 11px;
-      color: #94a3b8;
-    }
-    .footer a {
-      color: #e11d48;
-      text-decoration: none;
-    }
-    .footer a:hover {
-      text-decoration: underline;
-    }
+    .error-box { margin-top: 8px; }
+    .footer { margin-top: 10px; font-size: 11px; text-align: right; }
+    a { color: #c1e4ff; }
+    textarea::placeholder { color: #bec8d2; }
   </style>
 </head>
 <body>
-  <div class="header">
-    <div class="title-group">
-      <img src="icons/icon48.png" alt="Torii Icon" class="app-icon">
-      <span class="title">Sarashina 翻訳</span>
-      <span class="tag">非公式</span>
+  <main class="popup">
+    <div class="header">
+      <div class="title-group">
+        <img src="icons/icon48.png" alt="Torii Icon" class="app-icon">
+        <span class="title">Sarashina 翻訳</span>
+        <span class="tag">非公式</span>
+      </div>
+      <button id="open-settings-icon" class="settings-btn" type="button" title="設定を開く" aria-label="設定を開く">⚙</button>
     </div>
-    <button id="open-settings-icon" class="settings-btn" title="設定を開く">
-      ⚙️
-    </button>
-  </div>
 
-  <p style="font-size:12px;line-height:1.6;color:#475569;margin-bottom:12px">この拡張機能は個人が開発した非公式のものです。SB Intuitions株式会社が提供・公認する製品ではありません。</p>
+    <p class="notice">この拡張機能は個人が開発した非公式のものです。SB Intuitions株式会社が提供・公認する製品ではありません。</p>
 
-  <div id="api-key-warning" class="warning-banner">
-    ⚠️ <strong>APIキー未設定</strong><br>
-    Sarashina APIキーが設定されていません。<a id="open-settings-link">設定画面</a>から登録してください。
-  </div>
-
-  <!-- ページ全体翻訳セクション -->
-  <div class="full-page-section">
-    <div class="full-page-header">
-      <span class="full-page-title">🌐 Webサイト全体翻訳</span>
+    <div id="api-key-warning" class="warning-banner" hidden>
+      APIキーが設定されていません。<a id="open-settings-link" href="options.html">設定画面</a>から登録してください。
     </div>
-    <div class="full-page-controls">
-      <select id="page-translate-dir" class="full-page-select">
-        <option value="en_to_ja" selected>英語 → 日本語</option>
-        <option value="ja_to_en">日本語 → 英語</option>
-        <option value="multilingual_to_ja">多言語 → 日本語</option>
-      </select>
-      <button id="translate-page-btn" class="full-page-btn">ページ全体を翻訳</button>
+    <div id="settings-error-box" class="error-box" role="alert" hidden></div>
+
+    <div class="tabs" role="tablist" aria-label="Sarashinaの操作">
+      <button type="button" id="page-tab" role="tab" aria-selected="true" aria-controls="page-panel">今のページ</button>
+      <button type="button" id="text-tab" role="tab" aria-selected="false" aria-controls="text-panel" tabindex="-1">テキスト翻訳</button>
     </div>
-  </div>
 
-  <div class="full-page-section">
-    <div class="full-page-header">
-      <span class="full-page-title">英語・日本語の読み</span>
+    <section id="page-panel" role="tabpanel" aria-labelledby="page-tab">
+      <div class="section">
+        <h2>ページ全体翻訳</h2>
+        <div class="controls">
+          <select id="page-translate-dir" aria-label="ページの翻訳方向">
+            <option value="en_to_ja" selected>英語 → 日本語</option>
+            <option value="ja_to_en">日本語 → 英語</option>
+            <option value="multilingual_to_ja">多言語 → 日本語</option>
+          </select>
+          <button id="translate-page-btn" class="primary" type="button">ページ全体を翻訳</button>
+        </div>
+      </div>
+
+      <div class="section">
+        <h2>英語・日本語の読み</h2>
+        <p>英語はカタカナ、漢字はひらがなで表示します。表示中は、新しく出た文章や変更された文章もAPIへ送って読みを付けます。</p>
+        <p>選択した文章だけに付けるには、右クリックから「Sarashinaで選択部分に読みを付ける」を選びます。</p>
+        <div class="controls">
+          <button id="show-readings-btn" type="button">読みを表示</button>
+          <button id="remove-readings-btn" type="button">読みを外す</button>
+        </div>
+      </div>
+      <div id="page-error-box" class="error-box" role="alert" hidden></div>
+    </section>
+
+    <section id="text-panel" role="tabpanel" aria-labelledby="text-tab" hidden>
+      <label for="source-text">原文（上限5,000文字）</label>
+      <textarea id="source-text" placeholder="翻訳する文章を入力または貼り付け"></textarea>
+      <div class="controls">
+        <select id="text-translate-dir" aria-label="テキストの翻訳方向">
+          <option value="auto" selected>自動判定（日英・英日）</option>
+          <option value="en_to_ja">英語 → 日本語</option>
+          <option value="ja_to_en">日本語 → 英語</option>
+          <option value="multilingual_to_ja">多言語 → 日本語</option>
+        </select>
+        <button id="translate-btn" class="primary" type="button">翻訳</button>
+      </div>
+      <div id="error-box" class="error-box" role="alert" hidden></div>
+      <div id="result-group" class="result-group" hidden>
+        <div id="result-progress" class="result-progress" role="status" hidden>
+          <span id="result-orb" aria-hidden="true"></span>
+          翻訳中
+        </div>
+        <div id="result-content" hidden>
+          <div class="result-header">
+            <span>訳文</span>
+            <button id="copy-btn" type="button">コピー</button>
+          </div>
+          <div id="result-text" class="result-text" role="status"></div>
+        </div>
+      </div>
+    </section>
+
+    <div class="footer">
+      <a href="https://docs.sarashina.ai/api-reference/translate" target="_blank" rel="noopener">Sarashina APIの使い方</a>
     </div>
-    <p style="font-size:12px;line-height:1.6;color:#64748b;margin-bottom:8px">選択部分だけに付ける場合は、文章を選択して右クリックの「Sarashinaで選択部分に読みを付ける」を選びます。</p>
-    <p style="font-size:12px;line-height:1.6;color:#64748b;margin-bottom:8px">英語はカタカナ、漢字はひらがなで表示します。取得した読みはこのページ内で再利用します。ページ全体の読みを表示中は追加・変更された文章をAIへ送り、読みを付けます。</p>
-    <div class="full-page-controls">
-      <button id="show-readings-btn" class="full-page-btn">読みを表示</button>
-      <button id="remove-readings-btn" class="full-page-btn" style="background:#475569">読みを外す</button>
-    </div>
-  </div>
+  </main>
 
-  <div class="divider"></div>
-
-  <!-- テキスト手動翻訳セクション -->
-  <div class="form-group">
-    <label for="source-text">テキスト翻訳 (上限5,000文字)</label>
-    <textarea id="source-text" placeholder="ここにテキストを入力またはペースト..."></textarea>
-  </div>
-
-  <div class="controls">
-    <select id="text-translate-dir">
-      <option value="auto" selected>自動判定 (日英・英日)</option>
-      <option value="en_to_ja">英語 → 日本語</option>
-      <option value="ja_to_en">日本語 → 英語</option>
-      <option value="multilingual_to_ja">多言語 → 日本語</option>
-    </select>
-    <button id="translate-btn" class="translate-btn">翻訳</button>
-  </div>
-
-  <div id="error-box" class="error-box"></div>
-
-  <div id="result-group" class="result-group">
-    <div class="result-header">
-      <span class="result-title">翻訳結果</span>
-      <button id="copy-btn" class="copy-btn">コピー</button>
-    </div>
-    <div id="result-text" class="result-text"></div>
-  </div>
-
-  <div class="footer">
-    Powered by <a href="https://docs.sarashina.ai/api-reference/translate" target="_blank">Sarashina Translate API</a>
-  </div>
-
+  <script src="speech-status.bundle.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>

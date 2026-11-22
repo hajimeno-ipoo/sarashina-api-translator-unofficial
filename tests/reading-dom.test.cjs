@@ -152,20 +152,38 @@ for (const engine of engines) {
     const browser = await playwright[engine].launch({ headless: true, timeout: 15000, ...(executablePath ? { executablePath } : {}) });
     t.after(() => bounded(browser.close(), 'close test browser'));
 
-    await t.test('a partial TextNode sends and annotates only its selected characters', async () => {
-      const page = await setup(browser);
+    await t.test('selected readings keep the loading bar bounds and are removed when the bar closes', async () => {
+      const page = await setup(browser, 'deferred');
       try {
+        await page.addScriptTag({ path: path.join(__dirname, '..', 'speech-status.bundle.js') });
         await page.evaluate(() => { document.getElementById('changing').textContent = 'Before English 日本語 after.'; });
         assert.equal(await selectText(page, '#changing', 'English 日本語'), 'English 日本語');
         const response = await page.evaluate(() => new Promise(resolve => contentListeners[0](
           { action: 'start_selection_readings', sourceText: 'English 日本語' }, {}, resolve
         )));
         assert.deepEqual(response, { success: true });
+        const bar = page.locator('#sarashina-reading-bar');
+        await bar.getByRole('button', { name: '読み付けを中止' }).waitFor();
+        const loadingBounds = await bar.boundingBox();
+        const loadingCloseBounds = await bar.getByRole('button', { name: '読み付けを中止' }).boundingBox();
+        assert.equal(loadingBounds.height, 84);
+        await finishDeferred(page);
         await page.waitForFunction(() => !SarashinaReading.getState().running);
         assert.deepEqual(await sentAfter(page, 0), ['English 日本語']);
         assert.equal(await page.locator('#changing ruby').count(), 2);
         assert.equal(await page.locator('#article > :not(#changing) ruby').count(), 0);
-        await page.evaluate(() => SarashinaReading.remove());
+        assert.deepEqual(await bar.boundingBox(), loadingBounds);
+        const statusBounds = await bar.getByRole('status').boundingBox();
+        const removeBounds = await bar.getByRole('button', { name: '読みを外す', exact: true }).boundingBox();
+        assert.ok(removeBounds.y > statusBounds.y + statusBounds.height);
+        const close = bar.getByRole('button', { name: '読みを外して帯を閉じる' });
+        assert.deepEqual(await close.boundingBox(), loadingCloseBounds);
+        await close.click();
+        await bar.waitFor({ state: 'detached' });
+        assert.equal(await page.locator('#sarashina-status-stack > button').count(), 0);
+        assert.equal(await page.locator('#changing ruby').count(), 0);
+        assert.equal(await page.evaluate(() => SarashinaReading.getState().enabled), false);
+        assert.deepEqual(await sentAfter(page, 0), ['English 日本語']);
         assert.equal(await page.textContent('#changing'), 'Before English 日本語 after.');
       } finally { await bounded(page.close(), 'close fixture page'); }
     });
@@ -515,7 +533,7 @@ for (const engine of engines) {
       const page = await setup(browser);
       try {
         await page.evaluate(() => contentListeners.forEach((listener) => listener({ action: 'start_page_translation', direction: 'en_to_ja' }, {}, () => {})));
-        await page.waitForFunction(() => document.getElementById('sarashina-page-bar-container')?.shadowRoot.textContent.includes('翻訳完了'));
+        await page.getByRole('button', { name: '原文に戻す' }).waitFor();
         assert.equal(await page.textContent('#changing'), '日本語');
         await page.evaluate(() => SarashinaReading.start());
         assert.ok(await page.locator('#article ruby').count() > 0);
@@ -530,7 +548,7 @@ for (const engine of engines) {
       try {
         await beginDeferred(page);
         await page.evaluate(() => contentListeners.forEach((listener) => listener({ action: 'start_page_translation', direction: 'en_to_ja' }, {}, () => {})));
-        await page.waitForFunction(() => document.getElementById('sarashina-page-bar-container')?.shadowRoot.textContent.includes('翻訳完了'));
+        await page.getByRole('button', { name: '原文に戻す' }).waitFor();
         await finishDeferred(page);
         assert.equal(await page.locator('#article ruby').count(), 0);
         assert.equal(await page.textContent('#changing'), '日本語');
@@ -539,12 +557,48 @@ for (const engine of engines) {
       } finally { await bounded(page.close(), 'close fixture page'); }
     });
 
-    await t.test('remove cancels late responses and allows a fresh run', async () => {
+    await t.test('cancelling page translation restores applied chunks and ignores the outstanding reply', async () => {
+      const page = await setup(browser);
+      try {
+        await page.evaluate(() => {
+          document.body.replaceChildren(...['First', 'Second'].map((name, index) => {
+            const paragraph = document.createElement('p');
+            paragraph.id = `part-${index}`;
+            paragraph.textContent = `${name} original sentence. `.repeat(80);
+            return paragraph;
+          }));
+          window.originalTexts = Array.from(document.querySelectorAll('p'), node => node.textContent);
+          window.pageResponses = [];
+          chrome.runtime.sendMessage = () => new Promise(resolve => pageResponses.push(resolve));
+          contentListeners[0]({ action: 'start_page_translation' }, {}, () => {});
+        });
+        await page.waitForFunction(() => pageResponses.length === 1);
+        await page.evaluate(() => pageResponses[0]({ success: true, data: { translatedText: '[1] 最初の訳文' } }));
+        await page.waitForFunction(() => pageResponses.length === 2);
+        assert.match(await page.textContent('#part-0'), /最初の訳文/);
+        await page.getByRole('button', { name: 'ページ翻訳を中止' }).click();
+        const result = await page.evaluate(async () => {
+          pageResponses[1]({ success: true, data: { translatedText: '[1] 遅れて届いた訳文' } });
+          await new Promise(resolve => setTimeout(resolve, 0));
+          return {
+            texts: Array.from(document.querySelectorAll('p'), node => node.textContent),
+            originalTexts, requests: pageResponses.length
+          };
+        });
+        assert.deepEqual(result.texts, result.originalTexts);
+        assert.equal(result.requests, 2);
+        assert.equal(await page.locator('#sarashina-page-bar-container').count(), 0);
+      } finally { await bounded(page.close(), 'close fixture page'); }
+    });
+
+    await t.test('closing the loading bar cancels late responses and allows a fresh run', async () => {
       const page = await setup(browser, 'deferred');
       try {
         await beginDeferred(page);
-        await page.evaluate(() => SarashinaReading.remove());
+        const bar = page.locator('#sarashina-reading-bar');
+        await bar.getByRole('button', { name: '読み付けを中止' }).click();
         await finishDeferred(page);
+        assert.equal(await bar.count(), 0);
         assert.equal(await page.locator('#article ruby').count(), 0);
         assert.equal(await page.evaluate(() => document.getElementById('article').innerHTML === beforeArticle), true);
         await page.evaluate(() => SarashinaReading.start());
@@ -629,20 +683,26 @@ for (const engine of engines) {
       } finally { await bounded(page.close(), 'close fixture page'); }
     });
 
-    await t.test('a visible new paragraph is processed automatically without resending the old page', async () => {
+    await t.test('closing page readings restores the original and stops automatic requests', async () => {
       const page = await setup(browser);
       try {
         await page.evaluate(() => SarashinaReading.start());
         const before = await requestCount(page);
+        const bar = page.locator('#sarashina-reading-bar');
+        await bar.getByRole('button', { name: '読みを外して帯を閉じる' }).click();
+        assert.equal(await page.evaluate(() => document.getElementById('article').innerHTML === beforeArticle), true);
         await page.evaluate(() => {
           const paragraph = document.createElement('p');
           paragraph.id = 'appended';
           paragraph.textContent = 'New English paragraph.';
           document.getElementById('article').append(paragraph);
         });
-        await page.waitForFunction(() => document.querySelector('#appended ruby') && !SarashinaReading.getState().running);
+        await expectNoNewRequests(page, before);
+        assert.equal(await page.locator('#article ruby').count(), 0);
+        assert.equal(await bar.count(), 0);
+        await page.evaluate(() => SarashinaReading.start());
+        await bar.getByRole('button', { name: '読みを外して帯を閉じる' }).waitFor();
         assert.deepEqual(await sentAfter(page, before), ['New English paragraph.']);
-        await expectNoNewRequests(page, await requestCount(page));
       } finally { await bounded(page.close(), 'close fixture page'); }
     });
 
@@ -831,6 +891,61 @@ for (const engine of engines) {
       } finally { await bounded(page.close(), 'close fixture page'); }
     });
 
+    await t.test('the selection bar switches views and keeps the translation while an explanation is pending', async () => {
+      const page = await setup(browser);
+      try {
+        await page.addStyleTag({
+          content: '#sarashina-translator-container { all: initial; position: fixed; bottom: 24px; right: 24px; }'
+        });
+        await page.addScriptTag({ path: path.join(__dirname, '..', 'speech-status.bundle.js') });
+        await page.evaluate(() => {
+          const sendMessage = chrome.runtime.sendMessage;
+          chrome.runtime.sendMessage = request => {
+            if (request.action === 'translate') {
+              return Promise.resolve({ success: true, data: { translatedText: '日本語' } });
+            }
+            if (request.action === 'explain') {
+              return new Promise(resolve => { window.finishExplanation = resolve; });
+            }
+            return sendMessage(request);
+          };
+          contentListeners[0]({ action: 'translate_selection', sourceText: 'Original English.' }, {}, () => {});
+        });
+        const bar = page.getByRole('dialog', { name: '選択テキストの翻訳' });
+        const menu = bar.getByRole('button', { name: 'その他の操作' });
+        const translation = bar.locator('.sarashina-translated-text');
+        await translation.waitFor();
+        assert.equal((await bar.boundingBox()).y, 24);
+        assert.equal((await bar.boundingBox()).width, 450);
+        await page.getByRole('group', { name: '帯を移動' }).press('ArrowDown');
+        const beforeDrag = await bar.boundingBox();
+        assert.equal(beforeDrag.y, 40);
+        await page.mouse.move(beforeDrag.x + 12, beforeDrag.y + 20);
+        await page.mouse.down();
+        await page.mouse.move(beforeDrag.x + 52, beforeDrag.y + 48);
+        await page.mouse.up();
+        assert.equal((await bar.boundingBox()).x, beforeDrag.x + 40);
+        assert.equal((await bar.boundingBox()).y, beforeDrag.y + 28);
+
+        await menu.click();
+        await bar.getByRole('button', { name: '原文', exact: true }).click();
+        assert.equal(await translation.count(), 0);
+        assert.equal(await bar.locator('.sarashina-view-text').textContent(), 'Original English.');
+        await bar.getByRole('button', { name: '← 訳文' }).click();
+        await menu.click();
+        await bar.getByRole('button', { name: '解説', exact: true }).click();
+        await bar.getByText('解説を作成中').waitFor();
+        await bar.getByRole('button', { name: '← 訳文' }).click();
+        await page.evaluate(() => finishExplanation({ success: true, data: { explanationText: '模擬の解説' } }));
+        assert.equal(await translation.textContent(), '日本語');
+        assert.equal(await bar.getByText('模擬の解説').count(), 0);
+        await menu.click();
+        await bar.getByRole('button', { name: '解説', exact: true }).click();
+        await bar.getByText('模擬の解説').waitFor();
+        assert.equal(await translation.count(), 0);
+      } finally { await bounded(page.close(), 'close fixture page'); }
+    });
+
     await t.test('an invalidated extension context discards a pending nuance result', async () => {
       const page = await setup(browser);
       const pageErrors = [];
@@ -847,7 +962,8 @@ for (const engine of engines) {
           contentListeners[0]({ action: 'translate_selection', sourceText: 'Original English.' }, {}, () => {});
         });
         const card = page.locator('#sarashina-translator-container');
-        await card.getByRole('button', { name: '訳文のニュアンス' }).click();
+        await card.getByRole('button', { name: 'その他の操作' }).click();
+        await card.getByRole('button', { name: '訳文のニュアンス', exact: true }).click();
         await page.waitForFunction(() => typeof window.rejectNuance === 'function');
         await page.evaluate(() => {
           delete chrome.runtime.id;

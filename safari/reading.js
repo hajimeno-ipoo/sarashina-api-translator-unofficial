@@ -27,6 +27,7 @@
   let skipped = 0;
   let records = [];
   let bar = null;
+  let unmountLoading;
   let skipElement = () => false;
 
   function isRelevantMutation(mutation) {
@@ -54,37 +55,141 @@
     clearTimeout(updateTimer);
     updateTimer = setTimeout(() => {
       updateTimer = null;
-      if (enabled && !running) activePromise = refresh(generation);
+      if (enabled && !running) activePromise = refresh(generation, bar?.shadowRoot.querySelector(".bar").dataset.loading === "true");
     }, 600);
   }
 
-  function showStatus(message) {
-    ownDOM(() => renderStatus(message));
+  function showStatus(message, loading = false) {
+    ownDOM(() => renderStatus(message, loading));
   }
 
-  function renderStatus(message) {
+  function renderStatus(message, loading = false) {
     if (!bar?.isConnected) {
+      document.getElementById(BAR_ID)?.remove();
       bar = document.createElement("div");
       bar.id = BAR_ID;
+      bar.lang = "ja";
       const shadow = bar.attachShadow({ mode: "open" });
-      const style = document.createElement("style");
-      style.textContent = ":host{all:initial;position:fixed;bottom:16px;right:16px;z-index:2147483647;max-width:calc(100vw - 32px)}.bar{display:flex;gap:12px;align-items:center;flex-wrap:wrap;max-width:480px;padding:12px 16px;border:1px solid #cbd5e1;border-radius:10px;background:#fff;color:#0f172a;box-shadow:0 4px 20px #0003;font:14px/1.6 system-ui,sans-serif}button{padding:6px 12px;border:1px solid #94a3b8;border-radius:6px;background:#f1f5f9;color:#0f172a;font:inherit;cursor:pointer}button:focus-visible{outline:2px solid #e11d48;outline-offset:2px}";
+      const styles = `
+        :host {
+          all: initial;
+          position: fixed;
+          inset: 24px 0 auto;
+          width: min(450px, calc(100% - 32px));
+          margin-inline: auto;
+          display: block;
+          z-index: 2147483647;
+          pointer-events: none;
+        }
+        :host([data-sarashina-stacked]) { position: static; width: 100%; }
+        .bar {
+          position: relative;
+          isolation: isolate;
+          box-sizing: border-box;
+          height: 84px;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          gap: 6px;
+          padding: 8px 44px 8px 16px;
+          border-radius: 16px;
+          background: #202020;
+          color: #fff;
+          box-shadow: 0 8px 28px #0006;
+          font: 600 15px/1.4 system-ui, sans-serif;
+          color-scheme: dark;
+          pointer-events: auto;
+          touch-action: none;
+        }
+        [data-loading=true] { flex-direction: row; gap: 12px; }
+        [role=status] {
+          min-width: 0;
+          max-height: 100%;
+          overflow-y: auto;
+          text-align: center;
+          text-wrap: balance;
+          overflow-wrap: anywhere;
+        }
+        [data-loading=true] [role=status] { font-size: 18px; }
+        .motion { display: flex; }
+        .motion[hidden] { display: none; }
+        button {
+          flex: none;
+          min-height: 34px;
+          padding: 5px 9px;
+          border: 1px solid #686d73;
+          border-radius: 8px;
+          background: #303338;
+          color: #fff;
+          font: 600 13px/1.3 system-ui, sans-serif;
+          cursor: pointer;
+        }
+        button:hover { background: #41454a; }
+        button:focus-visible { outline: 2px solid #c1e4ff; outline-offset: 2px; }
+        button[hidden] { display: none; }
+        .close {
+          position: absolute;
+          top: 6px;
+          right: 6px;
+          width: 36px;
+          height: 36px;
+          padding: 0;
+          background: transparent;
+          border: 0;
+          font-size: 24px;
+          line-height: 1;
+        }
+      `;
+      const feedback = globalThis.SarashinaFeedback;
+      if (feedback) feedback.installStyles(shadow, styles);
+      else {
+        const style = document.createElement("style");
+        style.textContent = styles;
+        shadow.append(style);
+      }
       const panel = document.createElement("div");
       panel.className = "bar";
+      const motion = document.createElement("span");
+      motion.className = "motion";
+      motion.setAttribute("aria-hidden", "true");
       const status = document.createElement("span");
       status.setAttribute("role", "status");
       const remove = document.createElement("button");
       remove.type = "button";
+      remove.className = "toggle";
       remove.onclick = () => {
         if (enabled) removeReadings(true);
         else void resume();
       };
-      panel.append(status, remove);
-      shadow.append(style, panel);
-      document.documentElement.append(bar);
+      const close = document.createElement("button");
+      close.type = "button";
+      close.className = "close";
+      close.textContent = "×";
+      close.onclick = () => removeReadings();
+      panel.append(motion, status, remove, close);
+      shadow.append(panel);
+      if (feedback) feedback.placeBar(bar);
+      else document.documentElement.append(bar);
     }
-    bar.shadowRoot.querySelector("[role=status]").textContent = mode === "selection" ? `選択部分: ${message}` : message;
-    bar.shadowRoot.querySelector("button").textContent = enabled ? "読みを外す" : "再表示";
+    const panel = bar.shadowRoot.querySelector(".bar");
+    const motion = panel.querySelector(".motion");
+    if (panel.dataset.loading !== String(loading)) {
+      unmountLoading?.();
+      unmountLoading = loading
+        ? globalThis.SarashinaFeedback?.mountLoading(motion, { beam: true })
+        : undefined;
+    }
+    motion.hidden = !loading;
+    panel.dataset.loading = String(loading);
+    panel.querySelector("[role=status]").textContent = mode === "selection" ? `選択部分 · ${message}` : message;
+    const toggle = panel.querySelector(".toggle");
+    toggle.hidden = loading;
+    toggle.textContent = enabled ? "読みを外す" : "再表示";
+    const close = panel.querySelector(".close");
+    const closeLabel = loading ? "読み付けを中止" : "読みを外して帯を閉じる";
+    close.setAttribute("aria-label", closeLabel);
+    close.title = closeLabel;
   }
 
   function collectRuns() {
@@ -346,7 +451,12 @@
     ownDOM(() => {
       restoreRecords();
       if (keepControls) renderStatus("読みを非表示にしました");
-      else { bar?.remove(); bar = null; }
+      else {
+        unmountLoading?.();
+        unmountLoading = undefined;
+        bar?.remove();
+        bar = null;
+      }
     });
   }
 
@@ -402,7 +512,7 @@
     ownDOM(() => applyBatch(run.items, result));
   }
 
-  async function refresh(id) {
+  async function refresh(id, showProgress) {
     running = true;
     try {
       let batches;
@@ -420,7 +530,7 @@
         const batch = batches[index];
         for (const run of new Set(batch.map(item => item.run))) applyCachedRun(run);
         if (batch.every(item => cache.has(item.key))) continue;
-        showStatus(`読みを生成中 ${index + 1}/${batches.length}（${count}か所表示済み・APIの混雑時は待機します）`);
+        if (showProgress) showStatus(`読みを取得中 · ${index}/${batches.length}`, true);
         await loadBatch(batch);
         if (id !== generation || !enabled || dirty) return;
         // 長い段落はすべての分割の結果がそろってからまとめて反映する。
@@ -448,7 +558,7 @@
     }
     enabled = true;
     observe();
-    activePromise = refresh(++generation);
+    activePromise = refresh(++generation, true);
     return activePromise;
   }
 

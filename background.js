@@ -302,6 +302,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return;
   }
 
+  if (message.action === "open_options") {
+    const open = chrome.runtime.openOptionsPage
+      ? chrome.runtime.openOptionsPage()
+      : chrome.tabs.create({ url: chrome.runtime.getURL("options.html") });
+    Promise.resolve(open)
+      .then(() => sendResponse({ success: true }))
+      .catch(() => sendResponse({ success: false }));
+    return true;
+  }
+
   if (message.action === "prepare_api_key_storage") {
     prepareApiKeyStorage()
       .then(() => sendResponse({ success: true }))

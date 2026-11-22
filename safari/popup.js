@@ -10,13 +10,18 @@ document.addEventListener("DOMContentLoaded", async () => {
   const translateBtn = document.getElementById("translate-btn");
   const resultGroupEl = document.getElementById("result-group");
   const resultTextEl = document.getElementById("result-text");
+  const resultProgress = document.getElementById("result-progress");
+  const resultContent = document.getElementById("result-content");
   const copyBtn = document.getElementById("copy-btn");
   const errorBoxEl = document.getElementById("error-box");
+  const pageErrorBox = document.getElementById("page-error-box");
+  const settingsErrorBox = document.getElementById("settings-error-box");
   const apiKeyWarningEl = document.getElementById("api-key-warning");
   const openSettingsIcon = document.getElementById("open-settings-icon");
   const openSettingsLink = document.getElementById("open-settings-link");
 
-  function openOptions() {
+  function openOptions(event) {
+    event.preventDefault();
     if (ext.runtime.openOptionsPage) {
       ext.runtime.openOptionsPage();
     } else {
@@ -27,10 +32,36 @@ document.addEventListener("DOMContentLoaded", async () => {
   openSettingsIcon.addEventListener("click", openOptions);
   openSettingsLink.addEventListener("click", openOptions);
 
+  const tabs = Array.from(document.querySelectorAll('[role="tab"]'));
+  function selectTab(selectedTab) {
+    for (const tab of tabs) {
+      const active = tab === selectedTab;
+      tab.setAttribute("aria-selected", String(active));
+      tab.tabIndex = active ? 0 : -1;
+      document.getElementById(tab.getAttribute("aria-controls")).hidden = !active;
+    }
+  }
+  for (const [index, tab] of tabs.entries()) {
+    tab.addEventListener("click", () => selectTab(tab));
+    tab.addEventListener("keydown", event => {
+      let next;
+      switch (event.key) {
+        case "ArrowLeft": next = tabs[(index - 1 + tabs.length) % tabs.length]; break;
+        case "ArrowRight": next = tabs[(index + 1) % tabs.length]; break;
+        case "Home": next = tabs[0]; break;
+        case "End": next = tabs[tabs.length - 1]; break;
+        default: return;
+      }
+      event.preventDefault();
+      selectTab(next);
+      next.focus();
+    });
+  }
+
   const showReadingsBtn = document.getElementById("show-readings-btn");
   const removeReadingsBtn = document.getElementById("remove-readings-btn");
   async function requestPageReadings(remove) {
-    clearError();
+    clearError(pageErrorBox);
     showReadingsBtn.disabled = removeReadingsBtn.disabled = true;
     try {
       const [tab] = await ext.tabs.query({ active: true, currentWindow: true });
@@ -43,7 +74,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       if (!response?.success) throw new Error(response?.error || "読み付けを起動できませんでした。");
       window.close();
     } catch (error) {
-      showError(error.message);
+      showError(error.message, pageErrorBox);
     } finally {
       showReadingsBtn.disabled = removeReadingsBtn.disabled = false;
     }
@@ -52,7 +83,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   removeReadingsBtn.addEventListener("click", () => { void requestPageReadings(true); });
 
   translatePageBtn.addEventListener("click", async () => {
-    clearError();
+    clearError(pageErrorBox);
     translatePageBtn.disabled = true;
     translatePageBtn.textContent = "起動中...";
 
@@ -81,13 +112,14 @@ document.addEventListener("DOMContentLoaded", async () => {
         throw new Error(response?.error || "ページ全体翻訳の起動に失敗しました。");
       }
     } catch (err) {
-      showError(err.message || "予期しないエラーが発生しました。");
+      showError(err.message || "予期しないエラーが発生しました。", pageErrorBox);
       translatePageBtn.disabled = false;
       translatePageBtn.textContent = "ページ全体を翻訳";
     }
   });
 
   async function performTranslation() {
+    if (translateBtn.disabled) return;
     const text = sourceTextEl.value.trim();
     if (!text) {
       showError("翻訳するテキストを入力してください。");
@@ -100,9 +132,13 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
 
     clearError();
-    resultGroupEl.style.display = "none";
+    resultGroupEl.hidden = false;
+    resultProgress.hidden = false;
+    resultContent.hidden = true;
     translateBtn.disabled = true;
-    translateBtn.textContent = "翻訳中...";
+    const unmountLoading = globalThis.SarashinaFeedback?.mountLoading(
+      document.getElementById("result-orb"), { size: 32 }
+    );
 
     const direction = textTranslateDirEl.value;
 
@@ -119,15 +155,17 @@ document.addEventListener("DOMContentLoaded", async () => {
 
       if (response.success) {
         resultTextEl.textContent = response.data.translatedText;
-        resultGroupEl.style.display = "block";
+        resultContent.hidden = false;
       } else {
         showError(response.error || "翻訳中にエラーが発生しました。");
       }
     } catch (err) {
       showError(err.message || "予期しないエラーが発生しました。");
     } finally {
+      unmountLoading?.();
+      resultProgress.hidden = true;
+      resultGroupEl.hidden = resultContent.hidden;
       translateBtn.disabled = false;
-      translateBtn.textContent = "翻訳";
     }
   }
 
@@ -135,7 +173,8 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   sourceTextEl.addEventListener("keydown", (e) => {
     if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
-      performTranslation();
+      e.preventDefault();
+      void performTranslation();
     }
   });
 
@@ -145,7 +184,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     try {
       await navigator.clipboard.writeText(text);
-      copyBtn.textContent = "完了！";
+      copyBtn.textContent = "コピー済み";
       copyBtn.classList.add("copied");
       setTimeout(() => {
         copyBtn.textContent = "コピー";
@@ -156,14 +195,14 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
   });
 
-  function showError(msg) {
-    errorBoxEl.textContent = msg;
-    errorBoxEl.style.display = "block";
+  function showError(message, box = errorBoxEl) {
+    box.textContent = message;
+    box.hidden = false;
   }
 
-  function clearError() {
-    errorBoxEl.textContent = "";
-    errorBoxEl.style.display = "none";
+  function clearError(box = errorBoxEl) {
+    box.textContent = "";
+    box.hidden = true;
   }
 
   try {
@@ -174,9 +213,9 @@ document.addEventListener("DOMContentLoaded", async () => {
       ext.storage.sync.get("pageDefaultDirection"),
       ext.storage.local.get("apiKey")
     ]);
-    apiKeyWarningEl.style.display = apiKey?.trim() ? "none" : "block";
+    apiKeyWarningEl.hidden = Boolean(apiKey?.trim());
     if (pageDefaultDirection) pageTranslateDirEl.value = pageDefaultDirection;
   } catch {
-    showError("設定を読み込めませんでした。ポップアップを開き直してください。");
+    showError("設定を読み込めませんでした。ポップアップを開き直してください。", settingsErrorBox);
   }
 });
