@@ -902,7 +902,8 @@ for (const engine of engines) {
           const sendMessage = chrome.runtime.sendMessage;
           chrome.runtime.sendMessage = request => {
             if (request.action === 'translate') {
-              return Promise.resolve({ success: true, data: { translatedText: '日本語' } });
+              const translatedText = request.direction === 'ja_to_en' ? 'English result' : '日本語';
+              return Promise.resolve({ success: true, data: { translatedText } });
             }
             if (request.action === 'explain') {
               return new Promise(resolve => { window.finishExplanation = resolve; });
@@ -943,6 +944,12 @@ for (const engine of engines) {
         await bar.getByRole('button', { name: '解説', exact: true }).click();
         await bar.getByText('模擬の解説').waitFor();
         assert.equal(await translation.count(), 0);
+        await bar.getByRole('button', { name: '← 訳文' }).click();
+        await menu.click();
+        await bar.getByRole('button', { name: '翻訳方向', exact: true }).click();
+        await bar.getByRole('combobox', { name: '翻訳方向' }).selectOption('ja_to_en');
+        await bar.getByRole('button', { name: '再翻訳', exact: true }).press('Enter');
+        await bar.getByText('English result', { exact: true }).waitFor();
       } finally { await bounded(page.close(), 'close fixture page'); }
     });
 

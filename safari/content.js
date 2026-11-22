@@ -409,6 +409,7 @@
   }
 
   function onSelectionAction(event) {
+    if (!event.isTrusted) return;
     const button = event.target.closest("button[data-action]");
     if (!button || button.disabled) return;
     const action = button.dataset.action;
@@ -444,6 +445,12 @@
       case "retry-translation":
         void translateSelection(data.sourceText, data.direction);
         break;
+      case "retranslate": {
+        if (selectionActionPending()) return;
+        const direction = button.closest(".sarashina-direction-controls")?.querySelector("select")?.value;
+        if (direction) void translateSelection(data.sourceText, direction);
+        break;
+      }
       case "replace":
         setSelectionActions(false, false);
         void updateSelectionReplacement(false);
@@ -510,18 +517,12 @@
     const loading = wrapper.querySelector(".sarashina-orb");
     unmountSelectionLoading = loading && feedback ? feedback.mountLoading(loading, { beam: true }) : undefined;
 
-    const form = wrapper.querySelector("form");
-    if (form) form.onsubmit = event => {
-      event.preventDefault();
-      if (selectionActionPending()) return;
-      void translateSelection(data.sourceText, form.elements.direction.value);
-    };
     if (shouldFocus) {
       const previous = focusedAction && wrapper.querySelector(`[data-action="${CSS.escape(focusedAction)}"]:enabled`);
       const usable = previous && !previous.closest("[hidden]") ? previous : null;
       const focus = usable || wrapper.querySelector('[data-action="back"], [data-action="menu"]')
         || wrapper.querySelector('[data-action="close"]');
-      (form?.elements.direction || focus).focus({ preventScroll: true });
+      (wrapper.querySelector(".sarashina-direction-controls select") || focus).focus({ preventScroll: true });
     }
     return true;
   }
@@ -589,15 +590,15 @@
     } else if (selectionView === "direction") {
       title = "翻訳方向";
       content = `
-        <form class="sarashina-direction-form">
-          <select name="direction" aria-label="翻訳方向">
+        <div class="sarashina-direction-controls">
+          <select aria-label="翻訳方向">
             <option value="auto" ${data.direction === "auto" ? "selected" : ""}>自動判定</option>
             <option value="en_to_ja" ${data.direction === "en_to_ja" ? "selected" : ""}>英語 → 日本語</option>
             <option value="ja_to_en" ${data.direction === "ja_to_en" ? "selected" : ""}>日本語 → 英語</option>
             ${data.direction === "multilingual_to_ja" ? '<option value="multilingual_to_ja" selected>多言語 → 日本語</option>' : ""}
           </select>
-          <button type="submit" ${busy ? "disabled" : ""}>${data.status === "idle" ? "翻訳" : "再翻訳"}</button>
-        </form>
+          <button type="button" data-action="retranslate" ${busy ? "disabled" : ""}>${data.status === "idle" ? "翻訳" : "再翻訳"}</button>
+        </div>
       `;
     } else {
       const isExplanation = selectionView === "explanation";
@@ -730,8 +731,8 @@
         color: #ffdddd;
         overflow-wrap: anywhere;
       }
-      .sarashina-direction-form { display: flex; gap: 8px; }
-      .sarashina-direction-form select { min-width: 0; flex: 1; }
+      .sarashina-direction-controls { display: flex; gap: 8px; }
+      .sarashina-direction-controls select { min-width: 0; flex: 1; }
       .sarashina-menu-anchor { position: relative; z-index: 2; }
       #sarashina-selection-actions {
         position: absolute;
